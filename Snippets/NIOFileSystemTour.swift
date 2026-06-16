@@ -1,5 +1,6 @@
 // snippet.hide
 
+#if !os(Windows)
 import NIOCore
 import _NIOFileSystem
 
@@ -101,3 +102,4 @@ func main() async throws {
     }
     // snippet.end
 }
+#endif

@@ -636,14 +636,22 @@ if Context.environment["SWIFTCI_USE_LOCAL_DEPS"] == nil {
     package.dependencies += [
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.1.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
+    ]
+    #if !os(Windows)
+    package.dependencies += [
         .package(url: "https://github.com/apple/swift-system.git", from: "1.4.0"),
     ]
+    #endif
 } else {
     package.dependencies += [
         .package(path: "../swift-atomics"),
         .package(path: "../swift-collections"),
+    ]
+    #if !os(Windows)
+    package.dependencies += [
         .package(path: "../swift-system"),
     ]
+    #endif
 }
 
 // ---    STANDARD CROSS-REPO SETTINGS DO NOT EDIT   --- //
@@ -661,3 +669,34 @@ for target in package.targets {
     }
 }
 // --- END: STANDARD CROSS-REPO SETTINGS DO NOT EDIT --- //
+
+#if os(Windows)
+// The SwiftNIO file-system targets depend on POSIX-only `swift-system`
+// surface (FTS/FTSEnt, openat, struct stat, timespec, DIR*/dirent, ...)
+// that has no equivalent on Windows. They are excluded from the Windows
+// build pending either upstream `swift-system` parity or a native
+// Windows backend. See section L4.6 of
+// docs/superpowers/specs/2026-06-14-windows-port-design.md.
+//
+// NIOCrashTester is a POSIX-shaped harness (POSIX signals, setenv,
+// Pipe.fileDescriptor — the last is `@available(*, unavailable)` on
+// Windows in Foundation). No library depends on it.
+let windowsExcludedTargetNames: Set<String> = [
+    "_NIOFileSystem",
+    "NIOFS",
+    "NIOFileSystem",
+    "_NIOFileSystemFoundationCompat",
+    "NIOFSFoundationCompat",
+    "NIOFSTests",
+    "NIOFSIntegrationTests",
+    "NIOFSFoundationCompatTests",
+    "NIOCrashTester",
+]
+package.targets.removeAll(where: { windowsExcludedTargetNames.contains($0.name) })
+
+let windowsExcludedProductNames: Set<String> = [
+    "_NIOFileSystem",
+    "_NIOFileSystemFoundationCompat",
+]
+package.products.removeAll(where: { windowsExcludedProductNames.contains($0.name) })
+#endif
