@@ -18,6 +18,11 @@ import NIOPosix
 
 #if os(Windows)
 import WinSDK
+
+// The Windows CRT exposes getpid under its underscore-prefixed name; the
+// unprefixed POSIX name triggers a deprecation warning that fails under
+// -warnings-as-errors.
+private func getpid() -> CInt { _getpid() }
 #endif
 
 extension String {
