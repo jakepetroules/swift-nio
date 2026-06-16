@@ -35,9 +35,20 @@ import NIOHTTP1
 import NIOPosix
 #endif
 import NIOWebSocket
+#if os(Windows)
+import WinSDK
+#endif
 
 // Use unbuffered stdout to help detect exactly which test was running in the event of a crash.
+#if os(Windows)
+// On Windows, `stdout` is a function-style macro (`__acrt_iob_func(1)`),
+// which Swift's C importer cannot expose as a value. Call the underlying
+// CRT helper directly. MSVC deprecates setbuf in favour of setvbuf, so
+// pass _IONBF explicitly.
+setvbuf(__acrt_iob_func(1), nil, _IONBF, 0)
+#else
 setbuf(stdout, nil)
+#endif
 
 // MARK: Test Harness
 
