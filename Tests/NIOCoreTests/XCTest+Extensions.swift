@@ -19,6 +19,15 @@ import XCTest
 import Android
 #endif
 
+#if os(Windows)
+import WinSDK
+
+// Windows has no usleep; approximate via Sleep (millisecond resolution).
+private func usleep(_ microseconds: UInt32) {
+    Sleep((microseconds + 999) / 1000)
+}
+#endif
+
 func assert(
     _ condition: @autoclosure () -> Bool,
     within time: TimeAmount,

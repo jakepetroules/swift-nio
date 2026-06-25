@@ -23,6 +23,15 @@ import XCTest
 @testable import NIOCore
 @testable import NIOPosix
 
+#if os(Windows)
+import WinSDK
+
+// Windows has no usleep; approximate via Sleep (millisecond resolution).
+private func usleep(_ microseconds: UInt32) {
+    Sleep((microseconds + 999) / 1000)
+}
+#endif
+
 extension System {
     static var supportsIPv6: Bool {
         do {

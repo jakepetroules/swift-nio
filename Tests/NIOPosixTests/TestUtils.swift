@@ -20,6 +20,16 @@ import XCTest
 @testable import NIOCore
 @testable import NIOPosix
 
+#if os(Windows)
+import WinSDK
+
+// Windows has no usleep; approximate via Sleep (millisecond resolution).
+private func usleep(_ microseconds: UInt32) {
+    Sleep((microseconds + 999) / 1000)
+}
+#endif
+
+#if !os(Windows)
 extension System {
     static var supportsIPv6: Bool {
         do {
@@ -211,6 +221,8 @@ func withTemporaryFile<T>(
     }
     return try await body(fileHandle, path)
 }
+#endif  // !os(Windows)
+
 var temporaryDirectory: String {
     get {
         #if targetEnvironment(simulator)
@@ -231,6 +243,7 @@ var temporaryDirectory: String {
     }
 }
 
+#if !os(Windows)
 func createTemporaryDirectory() -> String {
     let template = "\(temporaryDirectory)/.NIOTests-temp-dir_XXXXXX"
 
@@ -260,6 +273,7 @@ func openTemporaryFile() -> (CInt, String) {
     templateBytes.removeLast()
     return (fd, String(decoding: templateBytes, as: Unicode.UTF8.self))
 }
+#endif  // !os(Windows)
 
 extension Channel {
     func syncCloseAcceptingAlreadyClosed() throws {
@@ -613,6 +627,7 @@ final class FulfillOnFirstEventHandler: ChannelDuplexHandler, Sendable {
     }
 }
 
+#if !os(Windows)
 func forEachActiveChannelType<T>(
     file: StaticString = #filePath,
     line: UInt = #line,
@@ -835,6 +850,7 @@ func forEachCrossConnectedStreamChannelPair<R>(
     let r3 = try withCrossConnectedUnixDomainSocketChannels(forceSeparateEventLoops: forceSeparateEventLoops, body)
     return [r1, r2, r3]
 }
+#endif  // !os(Windows)
 
 extension EventLoopFuture {
     var isFulfilled: Bool {

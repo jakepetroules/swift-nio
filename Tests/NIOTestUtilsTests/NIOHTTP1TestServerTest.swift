@@ -17,6 +17,15 @@ import NIOHTTP1
 import NIOPosix
 import NIOTestUtils
 import XCTest
+#if os(Windows)
+import WinSDK
+
+// Windows has no usleep; approximate via Sleep (millisecond resolution).
+// Round up so sub-millisecond requests still yield at least one tick.
+private func usleep(_ microseconds: UInt32) {
+    Sleep((microseconds + 999) / 1000)
+}
+#endif
 
 typealias SendableRequestPart = HTTPPart<HTTPRequestHead, ByteBuffer>
 

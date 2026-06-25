@@ -22,6 +22,9 @@ class UtilitiesTest: XCTestCase {
 
     @available(*, deprecated)
     func testEnumeratingInterfaces() throws {
+        #if os(Windows)
+        throw XCTSkip("System.enumerateInterfaces is not implemented on Windows")
+        #else
         // This is a tricky test, because we can't really assert much and expect this
         // to pass on all systems. The best we can do is assume there is a loopback:
         // maybe an IPv4 one, maybe an IPv6 one, but there will be one. We look for
@@ -50,9 +53,13 @@ class UtilitiesTest: XCTestCase {
         }
 
         XCTAssertTrue(ipv4LoopbackPresent || ipv6LoopbackPresent)
+        #endif
     }
 
     func testEnumeratingDevices() throws {
+        #if os(Windows)
+        throw XCTSkip("System.enumerateDevices is not implemented on Windows")
+        #else
         // This is a tricky test, because we can't really assert much and expect this
         // to pass on all systems. The best we can do is assume there is a loopback:
         // maybe an IPv4 one, maybe an IPv6 one, but there will be one. We look for
@@ -81,5 +88,6 @@ class UtilitiesTest: XCTestCase {
         }
 
         XCTAssertTrue(ipv4LoopbackPresent || ipv6LoopbackPresent)
+        #endif
     }
 }

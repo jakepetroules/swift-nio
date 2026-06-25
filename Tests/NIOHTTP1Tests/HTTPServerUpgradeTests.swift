@@ -20,6 +20,15 @@ import XCTest
 @testable import NIOHTTP1
 @testable import NIOPosix
 
+#if os(Windows)
+import WinSDK
+
+// Windows has no usleep; approximate via Sleep (millisecond resolution).
+private func usleep(_ microseconds: UInt32) {
+    Sleep((microseconds + 999) / 1000)
+}
+#endif
+
 extension ChannelPipeline {
     fileprivate func assertDoesNotContainUpgrader() throws {
         try self.assertDoesNotContain(handlerType: HTTPServerUpgradeHandler.self)
