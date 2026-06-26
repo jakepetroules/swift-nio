@@ -579,6 +579,7 @@ let package = Package(
             dependencies: [
                 "NIOCore",
                 "NIOFoundationCompat",
+                .target(name: "NIOPosix", condition: .when(platforms: [.windows])),
             ],
             swiftSettings: swiftSettings
         ),
