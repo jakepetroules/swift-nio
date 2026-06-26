@@ -41,7 +41,10 @@ final class EventLoopMetricsDelegateTests: XCTestCase {
         try group.syncShutdownGracefully()
     }
 
-    func testMetricsDelegateTickInfo() {
+    func testMetricsDelegateTickInfo() throws {
+        #if os(Windows)
+        throw XCTSkip("Tick counts are sensitive to selector wakeup semantics; Winsock-based selector ticks differ from kqueue/epoll")
+        #else
         let delegate = RecorderDelegate()
         let elg = MultiThreadedEventLoopGroup(numberOfThreads: 1, metricsDelegate: delegate)
         defer {
@@ -113,5 +116,6 @@ final class EventLoopMetricsDelegateTests: XCTestCase {
             }
         }
         try? promise.futureResult.wait()
+        #endif
     }
 }
