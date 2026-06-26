@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if !os(Windows)
 import CNIOLinux
 import NIOCore
 import XCTest
@@ -185,3 +186,4 @@ class SystemTest: XCTestCase {
         }
     }
 }
+#endif  // !os(Windows)

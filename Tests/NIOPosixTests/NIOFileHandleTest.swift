@@ -12,6 +12,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if !os(Windows)
 import Dispatch
 import NIOPosix
 import XCTest
@@ -169,3 +170,4 @@ final class NIOFileHandleTest: XCTestCase {
         return (pipeFDs[0], pipeFDs[1])
     }
 }
+#endif  // !os(Windows)

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 import CNIOLinux
 import NIOCore
 import NIOPosix
@@ -802,3 +803,4 @@ final class MulticastTest: XCTestCase {
         )
     }
 }
+#endif  // !os(Windows)
