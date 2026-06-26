@@ -11,7 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
-
+#if !os(Windows)
 import Dispatch
 import NIOConcurrencyHelpers
 import NIOCore
@@ -233,10 +233,7 @@ class ThreadTest: XCTestCase {
         XCTAssertNil(weakSome3)
     }
 
-    func testSharingThreadSpecificVariableWorks() throws {
-        #if os(Windows)
-        throw XCTSkip("Hangs on Windows; FLS destructor semantics for _beginthreadex worker threads differ from pthread_key_create — needs investigation")
-        #else
+    func testSharingThreadSpecificVariableWorks() {
         let s = DispatchSemaphore(value: 0)
         let thread1 = NIOLockedValueBox<NIOThread?>(nil)
         defer {
@@ -274,7 +271,6 @@ class ThreadTest: XCTestCase {
         }
         s.wait()
         XCTAssertNil(weakSome)
-        #endif
     }
 
     func testThreadSpecificInitWithValueWorks() throws {
@@ -441,3 +437,5 @@ class ThreadTest: XCTestCase {
         }
     }
 }
+
+#endif  // !os(Windows)
