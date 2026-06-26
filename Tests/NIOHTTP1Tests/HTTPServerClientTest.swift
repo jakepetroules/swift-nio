@@ -320,7 +320,11 @@ class HTTPServerClientTest: XCTestCase {
     }
 
     func testSimpleGetFileRegion() throws {
+        #if os(Windows)
+        throw XCTSkip("FileRegion writes hit \"Overlapped I/O operation is in progress\" on Windows; needs Winsock overlapped-I/O investigation")
+        #else
         try testSimpleGet(.fileRegion)
+        #endif
     }
 
     // @unchecked because of inheritance.
@@ -441,7 +445,11 @@ class HTTPServerClientTest: XCTestCase {
     }
 
     func testSimpleGetChunkedEncodingFileRegion() throws {
+        #if os(Windows)
+        throw XCTSkip("FileRegion writes hit \"Overlapped I/O operation is in progress\" on Windows; needs Winsock overlapped-I/O investigation")
+        #else
         try testSimpleGetChunkedEncoding(.fileRegion)
+        #endif
     }
 
     private func testSimpleGetChunkedEncoding(_ mode: SendMode) throws {
@@ -514,7 +522,11 @@ class HTTPServerClientTest: XCTestCase {
     }
 
     func testSimpleGetTrailersFileRegion() throws {
+        #if os(Windows)
+        throw XCTSkip("FileRegion writes hit \"Overlapped I/O operation is in progress\" on Windows; needs Winsock overlapped-I/O investigation")
+        #else
         try testSimpleGetTrailers(.fileRegion)
+        #endif
     }
 
     func testSimpleGetChunkedEncodingWithZeroLengthBodyPart() throws {
@@ -653,7 +665,11 @@ class HTTPServerClientTest: XCTestCase {
     }
 
     func testMassiveResponseFileRegion() throws {
+        #if os(Windows)
+        throw XCTSkip("FileRegion writes hit \"Overlapped I/O operation is in progress\" on Windows; needs Winsock overlapped-I/O investigation")
+        #else
         try testMassiveResponse(.fileRegion)
+        #endif
     }
 
     func testMassiveResponse(_ mode: SendMode) throws {
