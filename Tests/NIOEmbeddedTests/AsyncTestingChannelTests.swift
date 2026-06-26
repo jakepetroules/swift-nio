@@ -750,6 +750,7 @@ class AsyncTestingChannelTests: XCTestCase {
         }
     }
 
+    #if !os(Windows)
     func testGetSetOption() async throws {
         let channel = NIOAsyncTestingChannel()
         let option = ChannelOptions.socket(IPPROTO_IP, IP_TTL)
@@ -762,6 +763,7 @@ class AsyncTestingChannelTests: XCTestCase {
         let optionValue2 = try await channel.getOption(option).get()
         XCTAssertEqual(2, optionValue2)
     }
+    #endif
 
     func testSocketAddressesOnContext() async throws {
         final class Handler: ChannelInboundHandler, Sendable {

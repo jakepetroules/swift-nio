@@ -824,6 +824,9 @@ class EmbeddedChannelTest: XCTestCase {
         XCTAssertTrue(outboundInvocationPromise.futureResult.isFulfilled)
     }
 
+    #if !os(Windows)
+    // ChannelOptions.socket(SocketOptionLevel, SocketOptionName) is itself
+    // #if !os(Windows) in NIOCore — gate the test that exercises it.
     func testGetSetOption() throws {
         let channel = EmbeddedChannel()
         let option = ChannelOptions.socket(IPPROTO_IP, IP_TTL)
@@ -836,6 +839,7 @@ class EmbeddedChannelTest: XCTestCase {
         let optionValue2 = try channel.getOption(option).wait()
         XCTAssertEqual(2, optionValue2)
     }
+    #endif
 
     func testGetSetOptionOptInThrowing() {
         let channel = EmbeddedChannel()
