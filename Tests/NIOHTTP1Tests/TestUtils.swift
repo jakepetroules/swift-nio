@@ -54,6 +54,7 @@ extension System {
     }
 }
 
+#if !os(Windows)
 func withPipe(_ body: (NIOCore.NIOFileHandle, NIOCore.NIOFileHandle) throws -> [NIOCore.NIOFileHandle]) throws {
     var fds: [Int32] = [-1, -1]
     fds.withUnsafeMutableBufferPointer { ptr in
@@ -100,7 +101,9 @@ func withPipe(
         throw error
     }
 }
+#endif  // !os(Windows)
 
+#if !os(Windows)
 // swift-format-ignore: AmbiguousTrailingClosureOverload
 func withTemporaryDirectory<T>(_ body: (String) throws -> T) rethrows -> T {
     let dir = createTemporaryDirectory()
@@ -223,6 +226,7 @@ func withTemporaryFile<T>(
     }
     return try await body(fileHandle, path)
 }
+#endif  // !os(Windows)
 var temporaryDirectory: String {
     get {
         #if targetEnvironment(simulator)
@@ -243,6 +247,7 @@ var temporaryDirectory: String {
     }
 }
 
+#if !os(Windows)
 func createTemporaryDirectory() -> String {
     let template = "\(temporaryDirectory)/.NIOTests-temp-dir_XXXXXX"
 
@@ -272,6 +277,7 @@ func openTemporaryFile() -> (CInt, String) {
     templateBytes.removeLast()
     return (fd, String(decoding: templateBytes, as: Unicode.UTF8.self))
 }
+#endif  // !os(Windows)
 
 extension Channel {
     func syncCloseAcceptingAlreadyClosed() throws {
@@ -625,6 +631,7 @@ final class FulfillOnFirstEventHandler: ChannelDuplexHandler, Sendable {
     }
 }
 
+#if !os(Windows)
 func forEachActiveChannelType<T>(
     file: StaticString = #filePath,
     line: UInt = #line,
@@ -847,6 +854,7 @@ func forEachCrossConnectedStreamChannelPair<R>(
     let r3 = try withCrossConnectedUnixDomainSocketChannels(forceSeparateEventLoops: forceSeparateEventLoops, body)
     return [r1, r2, r3]
 }
+#endif  // !os(Windows)
 
 extension EventLoopFuture {
     var isFulfilled: Bool {
