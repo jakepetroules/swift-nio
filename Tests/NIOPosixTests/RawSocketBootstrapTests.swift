@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOCore
 import XCTest
@@ -218,3 +219,5 @@ final class RawSocketBootstrapTests: XCTestCase {
         XCTAssertEqual(receivedMessages, Set(expectedMessages))
     }
 }
+
+#endif  // !os(Windows)

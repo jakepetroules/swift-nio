@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import NIOConcurrencyHelpers
@@ -1214,3 +1215,5 @@ final class DropAllReadsOnTheFloorHandler: ChannelDuplexHandler, Sendable {
 
     func read(context: ChannelHandlerContext) {}
 }
+
+#endif  // !os(Windows)

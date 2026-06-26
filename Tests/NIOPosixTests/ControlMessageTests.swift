@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import CNIOLinux
 import XCTest
@@ -128,3 +129,5 @@ class ControlMessageTests: XCTestCase {
         XCTAssertGreaterThan(storage[2].count, MemoryLayout<cmsghdr>.stride)
     }
 }
+
+#endif  // !os(Windows)

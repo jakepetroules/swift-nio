@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import Dispatch
@@ -1041,3 +1042,5 @@ class EchoServerClientTest: XCTestCase {
         XCTAssertEqual(try promise.futureResult.wait(), buffer)
     }
 }
+
+#endif  // !os(Windows)

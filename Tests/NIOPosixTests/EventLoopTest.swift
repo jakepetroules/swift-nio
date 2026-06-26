@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import Dispatch
@@ -2580,3 +2581,5 @@ extension AutoreleaseOnDeiniter? {
 }
 
 #endif
+
+#endif  // !os(Windows)

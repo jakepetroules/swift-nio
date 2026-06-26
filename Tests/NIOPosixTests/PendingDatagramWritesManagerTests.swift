@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import CNIODarwin
 import CNIOLinux
@@ -850,3 +851,5 @@ class PendingDatagramWritesManagerTests: XCTestCase {
         }
     }
 }
+
+#endif  // !os(Windows)

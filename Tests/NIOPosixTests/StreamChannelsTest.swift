@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import CNIOLinux
@@ -1260,3 +1261,5 @@ private func assertNoSelectorChanges(
     #warning("assertNoSelectorChanges unsupported on this OS.")
     #endif
 }
+
+#endif  // !os(Windows)

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOCore
 import XCTest
@@ -57,3 +58,5 @@ final class SALEventLoopTests: XCTestCase {
         }
     }
 }
+
+#endif  // !os(Windows)

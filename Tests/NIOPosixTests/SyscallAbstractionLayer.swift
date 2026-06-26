@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 // This file contains a syscall abstraction layer (SAL) which hooks the Selector and the Socket in a way that we can
 // play the kernel whilst NIO thinks it's running on a real OS.
@@ -1146,3 +1147,5 @@ struct SyscallAssertions: @unchecked Sendable {
         try self.selector.assertParkedRightNow(file: file, line: line)
     }
 }
+
+#endif  // !os(Windows)

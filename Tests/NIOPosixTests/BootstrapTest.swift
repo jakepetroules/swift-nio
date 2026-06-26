@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOConcurrencyHelpers
 import NIOCore
@@ -931,3 +932,5 @@ private final class MakeSureAutoReadIsOffInChannelInitializer: ChannelInboundHan
         }
     }
 }
+
+#endif  // !os(Windows)

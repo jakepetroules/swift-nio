@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOConcurrencyHelpers
 import NIOCore
@@ -254,3 +255,5 @@ private class UniversalWithoutNewMethods: NIOClientTCPBootstrapProtocol {
         EmbeddedEventLoop().makePromise(of: Channel.self).futureResult
     }
 }
+
+#endif  // !os(Windows)

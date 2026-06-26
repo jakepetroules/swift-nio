@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import NIOConcurrencyHelpers
@@ -505,3 +506,5 @@ class SelectorTest: XCTestCase {
         XCTAssertNoThrow(try channelHasBeenClosedPromise.futureResult.wait())
     }
 }
+
+#endif  // !os(Windows)

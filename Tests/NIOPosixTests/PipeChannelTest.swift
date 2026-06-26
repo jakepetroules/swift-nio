@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Foundation
 import NIOCore
@@ -275,3 +276,5 @@ extension FileHandle {
         return buffer
     }
 }
+
+#endif  // !os(Windows)

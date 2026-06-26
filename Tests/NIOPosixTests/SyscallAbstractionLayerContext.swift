@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Dispatch
 import NIOCore
@@ -167,3 +168,5 @@ func withSALContext<R>(body: (SALContext) throws -> R) throws -> R {
     let result = try body(context)
     return result
 }
+
+#endif  // !os(Windows)

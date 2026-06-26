@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import NIOCore
@@ -1128,3 +1129,5 @@ final class SALChannelTest: XCTestCase {
         }
     }
 }
+
+#endif  // !os(Windows)

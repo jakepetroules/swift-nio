@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import CNIOLinux
 import NIOCore
@@ -351,3 +352,5 @@ final class SocketOptionProviderTest: XCTestCase {
         #endif
     }
 }
+
+#endif  // !os(Windows)

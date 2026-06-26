@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOConcurrencyHelpers
 import NIOCore
@@ -2220,3 +2221,5 @@ extension System {
     }
     #endif
 }
+
+#endif  // !os(Windows)

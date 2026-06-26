@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Foundation
 
@@ -136,3 +137,5 @@ func runSystemCallWrapperPerformanceTest(
         #line
     )
 }
+
+#endif  // !os(Windows)

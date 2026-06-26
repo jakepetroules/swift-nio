@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOConcurrencyHelpers
 import NIOTLS
@@ -1787,3 +1788,5 @@ private func XCTAsyncAssertThrowsError<T>(
         errorHandler(error)
     }
 }
+
+#endif  // !os(Windows)

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOCore  // NOTE: Not @testable import here -- testing public API surface.
 import NIOEmbedded
@@ -117,3 +118,5 @@ import Testing
         #expect(embeddedChannel is any NIOTransportAccessibleChannelCore == false)
     }
 }
+
+#endif  // !os(Windows)

@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import CNIOLinux
@@ -2010,3 +2011,5 @@ extension NonBlockingFileIOTest {
         }
     }
 }
+
+#endif  // !os(Windows)

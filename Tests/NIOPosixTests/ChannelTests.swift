@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Dispatch
 import NIOConcurrencyHelpers
@@ -3653,3 +3654,5 @@ private func veryNasty_blockUntilReadBufferIsNonEmpty(channel: Channel) throws {
         XCTAssertEqual(1, nfds)
     }
 }
+
+#endif  // !os(Windows)

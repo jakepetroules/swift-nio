@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import NIOCore
 import XCTest
@@ -362,3 +363,5 @@ class FileRegionTest: XCTestCase {
         )
     }
 }
+
+#endif  // !os(Windows)

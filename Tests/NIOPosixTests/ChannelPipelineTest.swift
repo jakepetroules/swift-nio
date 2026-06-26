@@ -11,6 +11,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
+#if !os(Windows)
 
 import Atomics
 import CNIOLinux
@@ -2855,3 +2856,5 @@ final class TestAddMultipleHandlersHandlerWorkingAroundSR9956: ChannelDuplexHand
         lhs === rhs
     }
 }
+
+#endif  // !os(Windows)
