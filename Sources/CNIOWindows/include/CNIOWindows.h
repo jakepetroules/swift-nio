@@ -147,6 +147,29 @@ int NIO(copysymlink)(const wchar_t *source, const wchar_t *destination, int fail
 // volumes. Returns 0 on success, or -1 with `errno` set.
 int NIO(rename)(const wchar_t *source, const wchar_t *destination, int replaceExisting);
 
+// Extended-attribute helpers backing the POSIX-shaped f*xattr wrappers, built
+// on NTFS Extended Attributes via the ntdll native calls NtQueryEaFile /
+// NtSetEaFile (resolved dynamically). `fd` is a CRT file descriptor. Attribute
+// names are passed as wide (UTF-16) strings and transcoded to the narrow,
+// case-insensitive names NTFS EAs use.
+//
+// Semantics mirror the Linux f*xattr family:
+//  - `fgetxattr`: with `value == NULL` (or `size == 0`) returns the size needed
+//    to hold the value; otherwise copies the value and returns its length, or
+//    fails with `ERANGE` if it doesn't fit. Fails with `ENODATA` if the named
+//    attribute doesn't exist. Returns the value length, or -1 with `errno` set.
+//  - `fsetxattr`: creates or replaces the named attribute. Returns 0, or -1.
+//  - `fremovexattr`: deletes the named attribute (fails with `ENODATA` if
+//    absent). Returns 0, or -1.
+//  - `flistxattr`: with `namebuf == NULL` (or `size == 0`) returns the size
+//    needed; otherwise writes the NUL-terminated attribute names with no
+//    padding and returns their total length, or fails with `ERANGE` if they
+//    don't fit. Returns the list length, or -1 with `errno` set.
+intptr_t NIO(fgetxattr)(int fd, const wchar_t *name, void *value, intptr_t size);
+int NIO(fsetxattr)(int fd, const wchar_t *name, const void *value, intptr_t size);
+int NIO(fremovexattr)(int fd, const wchar_t *name);
+intptr_t NIO(flistxattr)(int fd, char *namebuf, intptr_t size);
+
 #undef NIO
 
 #endif
