@@ -98,11 +98,11 @@ static int CNIOWindows_win32ErrorToErrno(DWORD error) {
   }
 }
 
-int CNIOWindows_copyfile(const wchar_t *source, const wchar_t *destination, int failIfExists) {
+static int CNIOWindows_copyfileImpl(const wchar_t *source, const wchar_t *destination, DWORD copyFlags) {
   COPYFILE2_EXTENDED_PARAMETERS parameters;
   ZeroMemory(&parameters, sizeof(parameters));
   parameters.dwSize = sizeof(parameters);
-  parameters.dwCopyFlags = failIfExists ? COPY_FILE_FAIL_IF_EXISTS : 0;
+  parameters.dwCopyFlags = copyFlags;
 
   // CopyFile2 transparently uses ReFS block cloning where available and falls
   // back to a full copy otherwise, mirroring Darwin's COPYFILE_CLONE behaviour.
@@ -118,6 +118,24 @@ int CNIOWindows_copyfile(const wchar_t *source, const wchar_t *destination, int 
                          : ERROR_IO_DEVICE;
   errno = CNIOWindows_win32ErrorToErrno(win32Error);
   return -1;
+}
+
+int CNIOWindows_copyfile(const wchar_t *source, const wchar_t *destination, int failIfExists) {
+  return CNIOWindows_copyfileImpl(source, destination,
+                                  failIfExists ? COPY_FILE_FAIL_IF_EXISTS : 0);
+}
+
+int CNIOWindows_copysymlink(const wchar_t *source, const wchar_t *destination, int failIfExists) {
+  // COPY_FILE_COPY_SYMLINK copies the symbolic link itself (recreating a link
+  // to the same target) rather than following it, so no separate readlink +
+  // symlink round-trip is needed. Creating the link requires
+  // SeCreateSymbolicLinkPrivilege (developer mode or elevation); without it
+  // CopyFile2 fails with ERROR_PRIVILEGE_NOT_HELD, which maps to EACCES.
+  DWORD flags = COPY_FILE_COPY_SYMLINK;
+  if (failIfExists) {
+    flags |= COPY_FILE_FAIL_IF_EXISTS;
+  }
+  return CNIOWindows_copyfileImpl(source, destination, flags);
 }
 
 #endif

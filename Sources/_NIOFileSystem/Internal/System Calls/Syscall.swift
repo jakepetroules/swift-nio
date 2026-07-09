@@ -406,6 +406,21 @@ public enum Libc: Sendable {
             }
         }
     }
+
+    @_spi(Testing)
+    public static func copysymlink(
+        from source: FilePath,
+        to destination: FilePath,
+        replaceExisting: Bool
+    ) -> Result<Void, Errno> {
+        source.withPlatformString { sourcePath in
+            destination.withPlatformString { destinationPath in
+                nothingOrErrno(retryOnInterrupt: false) {
+                    CNIOWindows_copysymlink(sourcePath, destinationPath, replaceExisting ? 0 : 1)
+                }
+            }
+        }
+    }
     #endif
 
     @_spi(Testing)

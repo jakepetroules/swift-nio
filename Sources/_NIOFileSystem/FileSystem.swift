@@ -1606,6 +1606,24 @@ extension FileSystem {
         to destinationPath: FilePath,
         replaceExisting: Bool
     ) -> Result<Void, FileSystemError> {
+        #if os(Windows)
+        // COPY_FILE_COPY_SYMLINK copies the link itself rather than its target,
+        // so a single CopyFile2 call covers both the replacing and non-replacing
+        // cases without a separate readlink + symlink round-trip.
+        return Libc.copysymlink(
+            from: sourcePath,
+            to: destinationPath,
+            replaceExisting: replaceExisting
+        ).mapError { errno in
+            FileSystemError.symlink(
+                "CopyFile2",
+                errno: errno,
+                link: destinationPath,
+                target: sourcePath,
+                location: .here()
+            )
+        }
+        #else
         if replaceExisting {
             return self._copySymbolicLinkReplacing(from: sourcePath, to: destinationPath)
         } else {
@@ -1613,8 +1631,10 @@ extension FileSystem {
                 self._createSymbolicLink(at: destinationPath, withDestination: linkDestination)
             }
         }
+        #endif
     }
 
+    #if !os(Windows)
     private func _copySymbolicLinkReplacing(
         from sourcePath: FilePath,
         to destinationPath: FilePath
@@ -1744,10 +1764,9 @@ extension FileSystem {
             )
             return .failure(error)
         }
-        #elseif os(Windows)
-        fatalError("_copySymbolicLink is unavailable on Windows")
         #endif
     }
+    #endif
 
     @_spi(Testing)
     public func removeOneItem(

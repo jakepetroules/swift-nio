@@ -133,6 +133,13 @@ void NIO(setStdoutUnbuffered)(void);
 // overwritten in place. Returns 0 on success, or -1 with `errno` set.
 int NIO(copyfile)(const wchar_t *source, const wchar_t *destination, int failIfExists);
 
+// As `copyfile`, but copies the symbolic link at `source` itself (via
+// `COPY_FILE_COPY_SYMLINK`) rather than following it, recreating a link to the
+// same target at `destination`. Creating the link requires
+// `SeCreateSymbolicLinkPrivilege`; without it the copy fails and `errno` is set
+// to `EACCES`.
+int NIO(copysymlink)(const wchar_t *source, const wchar_t *destination, int failIfExists);
+
 #undef NIO
 
 #endif
