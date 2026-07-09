@@ -122,6 +122,17 @@ DWORD NIO(FormatGetLastError)(DWORD errorCode, LPSTR errorMsg);
 // we remain correct if its definition ever changes.
 void NIO(setStdoutUnbuffered)(void);
 
+// Copies the regular file at `source` to `destination` using `CopyFile2`,
+// which transparently uses ReFS block cloning (copy-on-write) where the volume
+// supports it and falls back to a full copy otherwise. `source` and
+// `destination` are wide (UTF-16) paths, matching swift-system's
+// `CInterop.PlatformChar` on Windows.
+//
+// If `failIfExists` is non-zero the copy fails (setting `errno` to `EEXIST`)
+// when `destination` already exists; otherwise an existing destination is
+// overwritten in place. Returns 0 on success, or -1 with `errno` set.
+int NIO(copyfile)(const wchar_t *source, const wchar_t *destination, int failIfExists);
+
 #undef NIO
 
 #endif

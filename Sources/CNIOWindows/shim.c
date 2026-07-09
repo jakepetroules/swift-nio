@@ -84,4 +84,40 @@ void CNIOWindows_setStdoutUnbuffered(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
 }
 
+static int CNIOWindows_win32ErrorToErrno(DWORD error) {
+  switch (error) {
+  case ERROR_FILE_NOT_FOUND:
+  case ERROR_PATH_NOT_FOUND:    return ENOENT;
+  case ERROR_ACCESS_DENIED:     return EACCES;
+  case ERROR_FILE_EXISTS:
+  case ERROR_ALREADY_EXISTS:    return EEXIST;
+  case ERROR_NOT_ENOUGH_MEMORY:
+  case ERROR_OUTOFMEMORY:       return ENOMEM;
+  case ERROR_INVALID_PARAMETER: return EINVAL;
+  default:                      return EIO;
+  }
+}
+
+int CNIOWindows_copyfile(const wchar_t *source, const wchar_t *destination, int failIfExists) {
+  COPYFILE2_EXTENDED_PARAMETERS parameters;
+  ZeroMemory(&parameters, sizeof(parameters));
+  parameters.dwSize = sizeof(parameters);
+  parameters.dwCopyFlags = failIfExists ? COPY_FILE_FAIL_IF_EXISTS : 0;
+
+  // CopyFile2 transparently uses ReFS block cloning where available and falls
+  // back to a full copy otherwise, mirroring Darwin's COPYFILE_CLONE behaviour.
+  HRESULT result = CopyFile2(source, destination, &parameters);
+  if (SUCCEEDED(result)) {
+    return 0;
+  }
+
+  // CopyFile2 reports failures as an HRESULT; recover the underlying Win32
+  // error code when the failure originates from Win32 (the common case).
+  DWORD win32Error = HRESULT_FACILITY(result) == FACILITY_WIN32
+                         ? (DWORD)HRESULT_CODE(result)
+                         : ERROR_IO_DEVICE;
+  errno = CNIOWindows_win32ErrorToErrno(win32Error);
+  return -1;
+}
+
 #endif

@@ -1347,7 +1347,22 @@ extension FileSystem {
             }
         }
         #elseif os(Windows)
-        fatalError("_copyRegularFile is unavailable on Windows")
+        // CopyFile2 copies data and metadata in one call and transparently uses
+        // ReFS block cloning (copy-on-write) where the volume supports it,
+        // mirroring Darwin's COPYFILE_CLONE | COPYFILE_ALL. The overwrite is
+        // in-place rather than atomic, matching Darwin's COPYFILE_UNLINK.
+        return Libc.copyfile(
+            from: sourcePath,
+            to: destinationPath,
+            replaceExisting: replaceExisting
+        ).mapError { errno in
+            FileSystemError.copyfile(
+                errno: errno,
+                from: sourcePath,
+                to: destinationPath,
+                location: .here()
+            )
+        }
         #endif
     }
 

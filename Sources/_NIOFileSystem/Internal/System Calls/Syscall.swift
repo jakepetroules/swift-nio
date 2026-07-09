@@ -26,6 +26,9 @@ import CNIOLinux
 #elseif canImport(Bionic)
 @preconcurrency import Bionic
 import CNIOLinux
+#elseif os(Windows)
+import CNIOWindows
+import WinSDK
 #endif
 
 @_spi(Testing)
@@ -382,6 +385,23 @@ public enum Libc: Sendable {
             destination.withPlatformString { destinationPath in
                 nothingOrErrno(retryOnInterrupt: false) {
                     libc_copyfile(sourcePath, destinationPath, state, flags)
+                }
+            }
+        }
+    }
+    #endif
+
+    #if os(Windows)
+    @_spi(Testing)
+    public static func copyfile(
+        from source: FilePath,
+        to destination: FilePath,
+        replaceExisting: Bool
+    ) -> Result<Void, Errno> {
+        source.withPlatformString { sourcePath in
+            destination.withPlatformString { destinationPath in
+                nothingOrErrno(retryOnInterrupt: false) {
+                    CNIOWindows_copyfile(sourcePath, destinationPath, replaceExisting ? 0 : 1)
                 }
             }
         }
