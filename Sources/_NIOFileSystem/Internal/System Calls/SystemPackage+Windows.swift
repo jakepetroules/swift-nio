@@ -16,11 +16,10 @@
 
 // Windows-only compatibility shim for the NIOFileSystem family.
 //
-// This port is *compile-only*: it exists so the file-system targets build on
-// Windows. Every POSIX primitive that has no trivial Win32 equivalent is
-// stubbed with `fatalError(...)` (or a trivial value). Real Win32
-// implementations are a follow-up, tracked by the NIOFS Windows-port design
-// doc.
+// It supplies the POSIX-shaped types, constants and free functions the rest of
+// the target expects, mapping them onto Win32 / the CRT (mostly by delegating to
+// the `CNIOWindows` C shims). Runtime behaviour has not yet been validated by
+// the test suite; correctness is a follow-up.
 //
 // Everything here is defined at module scope so, thanks to same-module
 // visibility, the rest of the target can use these types, constants and
@@ -93,7 +92,11 @@ extension CInterop {
     typealias DirPointer = OpaquePointer
 
     /// Windows stand-in for `struct dirent`. `d_name` is a fixed-size tuple of
-    /// `CChar` so the existing `.0/.1/.2` "is this '.' or '..'" check compiles.
+    /// `CChar` so the existing `.0/.1/.2` "is this '.' or '..'" check compiles;
+    /// the full (wide) name is held separately and returned by
+    /// `CNIOWindows_dirent_dname`, since Windows names are UTF-16 and can exceed
+    /// the narrow tuple. The pointer is owned by the directory stream and valid
+    /// until the next `readdir`/`closedir`, matching POSIX `readdir` semantics.
     struct WindowsDirEnt {
         var d_type: UInt8 = 0
         var d_name:
@@ -101,6 +104,7 @@ extension CInterop {
                 CChar, CChar, CChar, CChar, CChar, CChar, CChar, CChar,
                 CChar, CChar, CChar, CChar, CChar, CChar, CChar, CChar
             ) = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        var d_name_wide: UnsafeMutablePointer<CInterop.PlatformChar>? = nil
 
         init() {}
     }
@@ -428,45 +432,235 @@ func confstr(
     0
 }
 
+// MARK: - Directory streams (opendir / readdir / closedir)
+//
+// The C layer (CNIOWindows_dir_*) provides raw FindFirstFileW iteration; the
+// stateful stream — owning the current `dirent` and its wide name buffer — lives
+// here so it can build the Swift `WindowsDirEnt` the rest of NIOFS reads.
+
+private final class WindowsDirectoryStream {
+    /// Opaque `CNIOWindows_DirStream *`.
+    private let handle: UnsafeMutableRawPointer
+    /// Backing storage for the entry returned by `readdir`; kept alive here and
+    /// handed out as a pointer, valid until the next `readdir`/`closedir`.
+    private var entry = CInterop.DirEnt()
+    /// Wide name buffer referenced by `entry.d_name_wide`.
+    private var wideName: [CInterop.PlatformChar] = []
+
+    init?(handle: UnsafeMutableRawPointer?) {
+        guard let handle = handle else { return nil }
+        self.handle = handle
+    }
+
+    /// Advances to the next entry, returning a pointer to the populated storage,
+    /// nil at end-of-directory, or setting `errno` and returning nil on error.
+    func next() -> UnsafeMutablePointer<CInterop.DirEnt>? {
+        var nameBuffer = [CInterop.PlatformChar](repeating: 0, count: Int(CInterop.maxPathLength) + 1)
+        var type: UInt8 = 0
+        let result = nameBuffer.withUnsafeMutableBufferPointer { buffer in
+            CNIOWindows_dir_next(self.handle, buffer.baseAddress, CInt(buffer.count), &type)
+        }
+        guard result == 1 else {
+            // 0 (end) and -1 (error, errno set) both surface as nil; the caller
+            // distinguishes them via errno through `optionalValueOrErrno`.
+            return nil
+        }
+
+        self.entry.d_type = type
+        // Keep the wide name alive and point the entry at it.
+        let nameLength = nameBuffer.firstIndex(of: 0).map { $0 + 1 } ?? nameBuffer.count
+        self.wideName = Array(nameBuffer[..<nameLength])
+        // Fill the narrow d_name tuple far enough for the "." / ".." check; the
+        // full name is read via `dirent_dname` from `d_name_wide`.
+        withUnsafeMutableBytes(of: &self.entry.d_name) { raw in
+            let bytes = raw.bindMemory(to: CChar.self)
+            for i in 0..<bytes.count { bytes[i] = 0 }
+            // The wide name's leading units are ASCII for "." / ".." so a direct
+            // truncating copy is sufficient for the sentinel comparison.
+            for i in 0..<min(bytes.count - 1, nameLength - 1) {
+                bytes[i] = CChar(truncatingIfNeeded: self.wideName[i])
+            }
+        }
+        return self.wideName.withUnsafeMutableBufferPointer { wide in
+            self.entry.d_name_wide = wide.baseAddress
+            return withUnsafeMutablePointer(to: &self.entry) { $0 }
+        }
+    }
+
+    func close() {
+        CNIOWindows_dir_close(self.handle)
+    }
+}
+
 func fdopendir(_ fd: FileDescriptor.RawValue) -> CInterop.DirPointer? {
-    fatalError("fdopendir is unavailable on Windows")
+    guard let stream = WindowsDirectoryStream(handle: CNIOWindows_dir_open_fd(fd)) else {
+        return nil
+    }
+    return CInterop.DirPointer(Unmanaged.passRetained(stream).toOpaque())
 }
 
 func readdir(_ dir: CInterop.DirPointer) -> UnsafeMutablePointer<CInterop.DirEnt>? {
-    fatalError("readdir is unavailable on Windows")
+    let stream = Unmanaged<WindowsDirectoryStream>.fromOpaque(UnsafeRawPointer(dir)).takeUnretainedValue()
+    return stream.next()
 }
 
 func closedir(_ dir: CInterop.DirPointer) -> CInt {
-    fatalError("closedir is unavailable on Windows")
+    let stream = Unmanaged<WindowsDirectoryStream>.fromOpaque(UnsafeRawPointer(dir))
+    stream.takeUnretainedValue().close()
+    stream.release()
+    return 0
 }
 
-// MARK: - FTS stubs
+// MARK: - dirent name accessor
+
+/// Windows equivalent of `CNIOLinux_dirent_dname` / `CNIODarwin_dirent_dname`:
+/// returns the entry's full (wide) name.
+func CNIOWindows_dirent_dname(
+    _ entry: UnsafeMutablePointer<CInterop.DirEnt>
+) -> UnsafePointer<CInterop.PlatformChar> {
+    UnsafePointer(entry.pointee.d_name_wide!)
+}
+
+// MARK: - FTS (fts_open / fts_read / fts_close)
+//
+// A minimal fts(3) reimplementation over the directory-iteration primitives. It
+// honours the flags NIOFS passes (FTS_PHYSICAL — the default — and FTS_NOCHDIR;
+// FTS_LOGICAL would follow symlinks but NIOFS only uses physical walks) and
+// emits the pre-order (FTS_D), post-order (FTS_DP), file (FTS_F), symlink
+// (FTS_SL), and error (FTS_DNR/FTS_ERR) events the enumerator switch handles.
+
+private final class WindowsFTS {
+    private struct Frame {
+        var stream: UnsafeMutableRawPointer  // CNIOWindows_DirStream *
+        var path: String                     // directory path (no trailing separator)
+    }
+
+    private var stack: [Frame] = []
+    /// Directories discovered in the current directory, queued for descent.
+    private var pendingPostOrder: [String] = []
+    private var ent = CInterop.FTSEnt()
+    private var pathStorage: [CInterop.PlatformChar] = []
+    private let followSymlinks: Bool
+    private var started = false
+    private let rootPath: String
+
+    init(rootPath: String, options: CInt) {
+        self.rootPath = rootPath
+        self.followSymlinks = (options & FTS_LOGICAL) != 0
+    }
+
+    private func openDirectory(_ path: String) -> UnsafeMutableRawPointer? {
+        path.withPlatformString { CNIOWindows_dir_open_path($0) }
+    }
+
+    /// Emits an event by populating `ent`/`pathStorage` and returning a pointer.
+    private func emit(info: CInt, errno: CInt, path: String) -> UnsafeMutablePointer<CInterop.FTSEnt> {
+        self.pathStorage = Array(path.utf16.map { CInterop.PlatformChar($0) }) + [0]
+        self.ent.fts_info = UInt16(truncatingIfNeeded: info)
+        self.ent.fts_errno = errno
+        return self.pathStorage.withUnsafeMutableBufferPointer { buffer in
+            self.ent.fts_path = buffer.baseAddress
+            return withUnsafeMutablePointer(to: &self.ent) { $0 }
+        }
+    }
+
+    func next() -> UnsafeMutablePointer<CInterop.FTSEnt>? {
+        // The very first read emits the root as a pre-order directory and opens it.
+        if !self.started {
+            self.started = true
+            guard let stream = self.openDirectory(self.rootPath) else {
+                return self.emit(info: FTS_DNR, errno: _nio_fs_errno, path: self.rootPath)
+            }
+            self.stack.append(Frame(stream: stream, path: self.rootPath))
+            return self.emit(info: FTS_D, errno: 0, path: self.rootPath)
+        }
+
+        while let frame = self.stack.last {
+            var nameBuffer = [CInterop.PlatformChar](repeating: 0, count: Int(CInterop.maxPathLength) + 1)
+            var type: UInt8 = 0
+            let result = nameBuffer.withUnsafeMutableBufferPointer { buffer in
+                CNIOWindows_dir_next(frame.stream, buffer.baseAddress, CInt(buffer.count), &type)
+            }
+
+            if result == -1 {
+                let err = _nio_fs_errno
+                return self.emit(info: FTS_ERR, errno: err, path: frame.path)
+            }
+            if result == 0 {
+                // End of this directory: close it, pop, and emit its post-order event.
+                CNIOWindows_dir_close(frame.stream)
+                self.stack.removeLast()
+                return self.emit(info: FTS_DP, errno: 0, path: frame.path)
+            }
+
+            let nameLength = nameBuffer.firstIndex(of: 0) ?? nameBuffer.count
+            let name = String(decoding: nameBuffer[..<nameLength].map { UInt16($0) }, as: UTF16.self)
+            if name == "." || name == ".." {
+                continue
+            }
+            let childPath = frame.path + "\\" + name
+
+            switch CInt(type) {
+            case DT_DIR:
+                // Descend: open the child and emit its pre-order event. If it
+                // can't be opened, report it as unreadable and keep going.
+                guard let childStream = self.openDirectory(childPath) else {
+                    return self.emit(info: FTS_DNR, errno: _nio_fs_errno, path: childPath)
+                }
+                self.stack.append(Frame(stream: childStream, path: childPath))
+                return self.emit(info: FTS_D, errno: 0, path: childPath)
+            case DT_LNK:
+                return self.emit(info: FTS_SL, errno: 0, path: childPath)
+            case DT_REG:
+                return self.emit(info: FTS_F, errno: 0, path: childPath)
+            default:
+                return self.emit(info: FTS_DEFAULT, errno: 0, path: childPath)
+            }
+        }
+
+        return nil  // walk complete
+    }
+
+    func close() {
+        while let frame = self.stack.popLast() {
+            CNIOWindows_dir_close(frame.stream)
+        }
+    }
+}
 
 func fts_open(
     _ path: [UnsafeMutablePointer<CInterop.PlatformChar>?],
     _ options: CInt,
     _ compare: UnsafeRawPointer?
 ) -> UnsafeMutablePointer<CInterop.FTS>? {
-    fatalError("fts_open is unavailable on Windows")
+    // NIOFS passes a single root path followed by a nil terminator.
+    guard let first = path.first, let root = first else {
+        return nil
+    }
+    let rootPath = String(decodingCString: root, as: UTF16.self)
+    let fts = WindowsFTS(rootPath: rootPath, options: options)
+    let opaque = CInterop.FTS(Unmanaged.passRetained(fts).toOpaque())
+    // `CInterop.FTS` is `OpaquePointer`; hand back a pointer to it as the API
+    // expects `UnsafeMutablePointer<CInterop.FTS>`.
+    let box = UnsafeMutablePointer<CInterop.FTS>.allocate(capacity: 1)
+    box.initialize(to: opaque)
+    return box
 }
 
 func fts_read(
     _ fts: UnsafeMutablePointer<CInterop.FTS>
 ) -> UnsafeMutablePointer<CInterop.FTSEnt>? {
-    fatalError("fts_read is unavailable on Windows")
+    let instance = Unmanaged<WindowsFTS>.fromOpaque(UnsafeRawPointer(fts.pointee)).takeUnretainedValue()
+    return instance.next()
 }
 
 func fts_close(_ fts: UnsafeMutablePointer<CInterop.FTS>) -> CInt {
-    fatalError("fts_close is unavailable on Windows")
-}
-
-// MARK: - dirent name accessor
-
-/// Windows equivalent of `CNIOLinux_dirent_dname` / `CNIODarwin_dirent_dname`.
-func CNIOWindows_dirent_dname(
-    _ entry: UnsafeMutablePointer<CInterop.DirEnt>
-) -> UnsafePointer<CInterop.PlatformChar> {
-    fatalError("CNIOWindows_dirent_dname is unavailable on Windows")
+    let unmanaged = Unmanaged<WindowsFTS>.fromOpaque(UnsafeRawPointer(fts.pointee))
+    unmanaged.takeUnretainedValue().close()
+    unmanaged.release()
+    fts.deinitialize(count: 1)
+    fts.deallocate()
+    return 0
 }
 
 // MARK: - pthread TLS stubs

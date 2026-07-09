@@ -271,6 +271,34 @@ int NIO(symlinkat)(const wchar_t *target, int dirfd, const wchar_t *linkPath);
 // NUL-terminated), returning the number of wchars written, or -1 with `errno`.
 intptr_t NIO(readlink)(const wchar_t *path, wchar_t *buffer, intptr_t size);
 
+// MARK: - Directory iteration primitives
+//
+// Raw FindFirstFileExW / FindNextFileW iteration. The stateful directory-stream
+// and FTS logic lives in Swift; these primitives just surface one entry at a
+// time so the Swift side needn't call the wide Win32 APIs directly.
+
+// Open a directory iterator from an open directory descriptor, or by path (the
+// latter is used by the FTS walk to descend into subdirectories). Returns an
+// opaque handle, or NULL with `errno` set.
+void *NIO(dir_open_fd)(int fd);
+void *NIO(dir_open_path)(const wchar_t *path);
+
+// Fetch the next entry. Writes the entry's (wide, NUL-terminated) name into
+// `nameOut` (capacity `nameCap` wchars) and its type — one of the CNIO_DT_*
+// values below — into `*typeOut`. Returns 1 for an entry, 0 at end of
+// directory, or -1 with `errno` set.
+int NIO(dir_next)(void *dir, wchar_t *nameOut, int nameCap, uint8_t *typeOut);
+
+// Close an iterator opened by dir_open_fd / dir_open_path.
+void NIO(dir_close)(void *dir);
+
+// Entry-type values reported by dir_next (mirroring the DT_* constants the Swift
+// layer uses).
+#define CNIO_DT_UNKNOWN 0
+#define CNIO_DT_DIR     4
+#define CNIO_DT_REG     8
+#define CNIO_DT_LNK     10
+
 #undef NIO
 
 #endif

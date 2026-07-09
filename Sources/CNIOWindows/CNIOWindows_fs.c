@@ -513,4 +513,111 @@ intptr_t CNIOWindows_readlink(const wchar_t *path, wchar_t *buffer, intptr_t siz
   return wcharCount;
 }
 
+// MARK: - Directory iteration primitives
+
+typedef struct {
+  HANDLE findHandle;         // INVALID_HANDLE_VALUE until the first dir_next
+  WIN32_FIND_DATAW findData; // the entry staged by FindFirstFileExW / FindNextFileW
+  int havePending;           // 1 if findData holds an unconsumed entry
+  wchar_t searchPath[32768]; // "<dir>\*"
+} CNIOWindows_DirStream;
+
+static void *CNIOWindows_dirOpenSearchPath(const wchar_t *directory, size_t directoryLength) {
+  // Need room for the directory, a separator, '*' and the NUL.
+  if (directoryLength + 3 > 32768) {
+    errno = ENAMETOOLONG;
+    return NULL;
+  }
+  CNIOWindows_DirStream *stream = (CNIOWindows_DirStream *)calloc(1, sizeof(*stream));
+  if (stream == NULL) {
+    errno = ENOMEM;
+    return NULL;
+  }
+  memcpy(stream->searchPath, directory, directoryLength * sizeof(wchar_t));
+  size_t index = directoryLength;
+  // Avoid a double separator if the path already ends in one.
+  if (index > 0 && stream->searchPath[index - 1] != L'\\' && stream->searchPath[index - 1] != L'/') {
+    stream->searchPath[index++] = L'\\';
+  }
+  stream->searchPath[index++] = L'*';
+  stream->searchPath[index] = L'\0';
+  stream->findHandle = INVALID_HANDLE_VALUE;
+  stream->havePending = 0;
+  return stream;
+}
+
+void *CNIOWindows_dir_open_path(const wchar_t *path) {
+  return CNIOWindows_dirOpenSearchPath(path, wcslen(path));
+}
+
+void *CNIOWindows_dir_open_fd(int fd) {
+  wchar_t directory[32768];
+  int length = CNIOWindows_pathForFd(fd, directory, sizeof(directory) / sizeof(wchar_t));
+  if (length < 0) {
+    return NULL;
+  }
+  return CNIOWindows_dirOpenSearchPath(directory, (size_t)length);
+}
+
+int CNIOWindows_dir_next(void *dir, wchar_t *nameOut, int nameCap, uint8_t *typeOut) {
+  CNIOWindows_DirStream *stream = (CNIOWindows_DirStream *)dir;
+  if (stream == NULL) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  if (stream->findHandle == INVALID_HANDLE_VALUE) {
+    // First call: start the search.
+    stream->findHandle = FindFirstFileExW(stream->searchPath, FindExInfoBasic,
+                                          &stream->findData, FindExSearchNameMatch,
+                                          NULL, FIND_FIRST_EX_LARGE_FETCH);
+    if (stream->findHandle == INVALID_HANDLE_VALUE) {
+      DWORD error = GetLastError();
+      if (error == ERROR_FILE_NOT_FOUND || error == ERROR_NO_MORE_FILES) {
+        return 0;  // empty directory
+      }
+      errno = CNIOWindows_fsErrno(error);
+      return -1;
+    }
+    stream->havePending = 1;
+  } else if (!stream->havePending) {
+    if (!FindNextFileW(stream->findHandle, &stream->findData)) {
+      DWORD error = GetLastError();
+      if (error == ERROR_NO_MORE_FILES) {
+        return 0;
+      }
+      errno = CNIOWindows_fsErrno(error);
+      return -1;
+    }
+  }
+  stream->havePending = 0;
+
+  if ((int)wcslen(stream->findData.cFileName) + 1 > nameCap) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  wcscpy(nameOut, stream->findData.cFileName);
+
+  DWORD attributes = stream->findData.dwFileAttributes;
+  if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+    *typeOut = CNIO_DT_LNK;
+  } else if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+    *typeOut = CNIO_DT_DIR;
+  } else {
+    *typeOut = CNIO_DT_REG;
+  }
+  return 1;
+}
+
+void CNIOWindows_dir_close(void *dir) {
+  CNIOWindows_DirStream *stream = (CNIOWindows_DirStream *)dir;
+  if (stream == NULL) {
+    return;
+  }
+  if (stream->findHandle != INVALID_HANDLE_VALUE) {
+    FindClose(stream->findHandle);
+  }
+  free(stream);
+}
+
 #endif  // defined(_WIN32)
