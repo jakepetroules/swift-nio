@@ -194,6 +194,9 @@ internal func system_flistxattr(
     #elseif canImport(Glibc) || canImport(Musl) || canImport(Android)
     return flistxattr(fd, namebuf, size)
     #elseif os(Windows)
+    // TODO: It is unclear whether extended attributes should be implemented in
+    // terms of NTFS Extended Attributes (EAs) or NTFS Alternate Data Streams
+    // (ADS) on Windows; revisit in a follow-up change.
     fatalError("flistxattr is unavailable on Windows")
     #endif
 }
@@ -218,6 +221,9 @@ internal func system_fgetxattr(
     #elseif canImport(Glibc) || canImport(Musl) || canImport(Android)
     return fgetxattr(fd, name, value, size)
     #elseif os(Windows)
+    // TODO: It is unclear whether extended attributes should be implemented in
+    // terms of NTFS Extended Attributes (EAs) or NTFS Alternate Data Streams
+    // (ADS) on Windows; revisit in a follow-up change.
     fatalError("fgetxattr is unavailable on Windows")
     #endif
 }
@@ -242,6 +248,9 @@ internal func system_fsetxattr(
     #elseif canImport(Glibc) || canImport(Musl) || canImport(Android)
     return fsetxattr(fd, name, value, size, 0)
     #elseif os(Windows)
+    // TODO: It is unclear whether extended attributes should be implemented in
+    // terms of NTFS Extended Attributes (EAs) or NTFS Alternate Data Streams
+    // (ADS) on Windows; revisit in a follow-up change.
     fatalError("fsetxattr is unavailable on Windows")
     #endif
 }
@@ -263,6 +272,9 @@ internal func system_fremovexattr(
     #elseif canImport(Glibc) || canImport(Musl) || canImport(Android)
     return fremovexattr(fd, name)
     #elseif os(Windows)
+    // TODO: It is unclear whether extended attributes should be implemented in
+    // terms of NTFS Extended Attributes (EAs) or NTFS Alternate Data Streams
+    // (ADS) on Windows; revisit in a follow-up change.
     fatalError("fremovexattr is unavailable on Windows")
     #endif
 }
