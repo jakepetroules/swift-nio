@@ -170,6 +170,70 @@ int NIO(fsetxattr)(int fd, const wchar_t *name, const void *value, intptr_t size
 int NIO(fremovexattr)(int fd, const wchar_t *name);
 intptr_t NIO(flistxattr)(int fd, char *namebuf, intptr_t size);
 
+// MARK: - Scalar filesystem / CRT helpers
+//
+// Thin wrappers over CRT / Win32 primitives backing the POSIX-shaped syscall
+// stubs used by the NIOFileSystem family. Each returns 0 / a valid pointer on
+// success, or -1 / NULL with `errno` set, matching its POSIX counterpart.
+
+// `fsync(2)` -> `FlushFileBuffers`.
+int NIO(fsync)(int fd);
+// `getenv(3)`; returns a pointer owned by the CRT environment (or NULL).
+char *NIO(getenv)(const char *name);
+// `getcwd(3)` over wide paths -> `_wgetcwd`.
+wchar_t *NIO(getcwd)(wchar_t *buffer, int size);
+// `strerror(3)`.
+char *NIO(strerror)(int code);
+// `mkdir(2)` -> `CreateDirectoryW` (mode is not representable, ignored).
+int NIO(mkdir)(const wchar_t *path);
+// `unlink(2)` -> `DeleteFileW`.
+int NIO(unlink)(const wchar_t *path);
+// `remove(3)` -> `DeleteFileW`, falling back to `RemoveDirectoryW` for a directory.
+int NIO(remove)(const wchar_t *path);
+// `link(2)` -> `CreateHardLinkW`.
+int NIO(link)(const wchar_t *existing, const wchar_t *newLink);
+
+// Thread-local storage via Fiber Local Storage, backing the pthread_key_* API.
+// FLS (rather than TLS) is used because its destructor callback runs on thread
+// exit, matching pthread key destructor semantics. Keys are `uint32_t` to match
+// the Swift `pthread_key_t` typealias.
+int NIO(fls_key_create)(uint32_t *key, void (*destructor)(void *));
+int NIO(fls_set)(uint32_t key, const void *value);
+void *NIO(fls_get)(uint32_t key);
+
+// MARK: - stat family
+
+// POSIX-shaped file status. A flat C struct the Swift layer translates into its
+// own `CInterop.Stat`; timestamps are whole seconds + nanoseconds since the
+// Unix epoch. Mode uses the standard `S_IF*` bits.
+typedef struct {
+  uint64_t st_dev;
+  uint64_t st_ino;
+  uint32_t st_mode;
+  uint32_t st_nlink;
+  uint64_t st_size;
+  int64_t st_atim_sec;
+  int64_t st_atim_nsec;
+  int64_t st_mtim_sec;
+  int64_t st_mtim_nsec;
+  int64_t st_ctim_sec;
+  int64_t st_ctim_nsec;
+} CNIOWindows_stat_t;
+
+// `fstat(2)` from a CRT file descriptor.
+int NIO(fstat)(int fd, CNIOWindows_stat_t *out);
+// `stat(2)` / `lstat(2)`; `followSymlinks` selects whether reparse points are
+// followed (stat) or reported as links (lstat).
+int NIO(stat)(const wchar_t *path, int followSymlinks, CNIOWindows_stat_t *out);
+// `fchmod(2)`: only the writable bit is representable; sets/clears
+// `FILE_ATTRIBUTE_READONLY` accordingly.
+int NIO(fchmod)(int fd, uint32_t mode);
+// `futimens(2)`: set access/modification times from nanoseconds since the Unix
+// epoch. A `*_sec` of -1 leaves that timestamp unchanged (UTIME_OMIT) and -2
+// sets it to the current time (UTIME_NOW); the Swift layer maps the POSIX
+// sentinels onto this convention.
+int NIO(futimens)(int fd, int64_t atimeSec, int64_t atimeNsec, int64_t mtimeSec, int64_t mtimeNsec);
+
 #undef NIO
 
 #endif

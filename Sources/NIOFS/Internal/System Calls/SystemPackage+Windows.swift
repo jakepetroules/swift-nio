@@ -69,6 +69,19 @@ extension CInterop {
         var st_ctim: timespec = timespec()
 
         init() {}
+
+        /// Translates the flat C `CNIOWindows_stat_t` bridge struct produced by
+        /// the stat shims into the fields NIOFS reads.
+        init(_ raw: CNIOWindows_stat_t) {
+            self.st_dev = raw.st_dev
+            self.st_ino = raw.st_ino
+            self.st_mode = raw.st_mode
+            self.st_nlink = raw.st_nlink
+            self.st_size = Int64(bitPattern: raw.st_size)
+            self.st_atim = timespec(tv_sec: Int(raw.st_atim_sec), tv_nsec: Int(raw.st_atim_nsec))
+            self.st_mtim = timespec(tv_sec: Int(raw.st_mtim_sec), tv_nsec: Int(raw.st_mtim_nsec))
+            self.st_ctim = timespec(tv_sec: Int(raw.st_ctim_sec), tv_nsec: Int(raw.st_ctim_nsec))
+        }
     }
 
     public typealias Stat = WindowsStat
@@ -210,7 +223,7 @@ func strlen(_ s: UnsafePointer<CInterop.PlatformChar>) -> Int {
 }
 
 func strerror(_ code: CInt) -> UnsafeMutablePointer<CChar>? {
-    fatalError("strerror is unavailable on Windows")
+    CNIOWindows_strerror(code)
 }
 
 func memset(_ b: UnsafeMutableRawPointer, _ c: CInt, _ len: Int) -> UnsafeMutableRawPointer {
@@ -219,7 +232,7 @@ func memset(_ b: UnsafeMutableRawPointer, _ c: CInt, _ len: Int) -> UnsafeMutabl
 }
 
 func getenv(_ name: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>? {
-    fatalError("getenv is unavailable on Windows")
+    CNIOWindows_getenv(name)
 }
 
 // MARK: - POSIX file-system syscall stubs
@@ -248,33 +261,52 @@ func stat(
     _ path: UnsafePointer<CInterop.PlatformChar>,
     _ info: UnsafeMutablePointer<CInterop.Stat>
 ) -> CInt {
-    fatalError("stat is unavailable on Windows")
+    _nio_fs_stat(path, followSymlinks: true, info)
 }
 
 func lstat(
     _ path: UnsafePointer<CInterop.PlatformChar>,
     _ info: UnsafeMutablePointer<CInterop.Stat>
 ) -> CInt {
-    fatalError("lstat is unavailable on Windows")
+    _nio_fs_stat(path, followSymlinks: false, info)
 }
 
 func fstat(
     _ fd: FileDescriptor.RawValue,
     _ info: UnsafeMutablePointer<CInterop.Stat>
 ) -> CInt {
-    fatalError("fstat is unavailable on Windows")
+    var raw = CNIOWindows_stat_t()
+    let result = CNIOWindows_fstat(fd, &raw)
+    if result == 0 {
+        info.pointee = CInterop.Stat(raw)
+    }
+    return result
+}
+
+private func _nio_fs_stat(
+    _ path: UnsafePointer<CInterop.PlatformChar>,
+    followSymlinks: Bool,
+    _ info: UnsafeMutablePointer<CInterop.Stat>
+) -> CInt {
+    var raw = CNIOWindows_stat_t()
+    let result = CNIOWindows_stat(path, followSymlinks ? 1 : 0, &raw)
+    if result == 0 {
+        info.pointee = CInterop.Stat(raw)
+    }
+    return result
 }
 
 func fchmod(_ fd: FileDescriptor.RawValue, _ mode: CInterop.Mode) -> CInt {
-    fatalError("fchmod is unavailable on Windows")
+    CNIOWindows_fchmod(fd, UInt32(mode))
 }
 
 func fsync(_ fd: FileDescriptor.RawValue) -> CInt {
-    fatalError("fsync is unavailable on Windows")
+    CNIOWindows_fsync(fd)
 }
 
 func mkdir(_ path: UnsafePointer<CInterop.PlatformChar>, _ mode: CInterop.Mode) -> CInt {
-    fatalError("mkdir is unavailable on Windows")
+    // Windows directories inherit their ACL; `mode` has no representable analogue.
+    CNIOWindows_mkdir(path)
 }
 
 func symlink(
@@ -304,18 +336,19 @@ func rename(
     _ old: UnsafePointer<CInterop.PlatformChar>,
     _ new: UnsafePointer<CInterop.PlatformChar>
 ) -> CInt {
-    fatalError("rename is unavailable on Windows")
+    // Plain rename overwrites any existing destination, like POSIX `rename`.
+    CNIOWindows_rename(old, new, 1)
 }
 
 func link(
     _ old: UnsafePointer<CInterop.PlatformChar>,
     _ new: UnsafePointer<CInterop.PlatformChar>
 ) -> CInt {
-    fatalError("link is unavailable on Windows")
+    CNIOWindows_link(old, new)
 }
 
 func unlink(_ path: UnsafePointer<CInterop.PlatformChar>) -> CInt {
-    fatalError("unlink is unavailable on Windows")
+    CNIOWindows_unlink(path)
 }
 
 func unlinkat(
@@ -330,18 +363,44 @@ func futimens(
     _ fd: FileDescriptor.RawValue,
     _ times: UnsafePointer<timespec>?
 ) -> CInt {
-    fatalError("futimens is unavailable on Windows")
+    // POSIX `futimens` takes a 2-element array [access, modification]; a nil
+    // pointer means "set both to now". Encode each timestamp for the C shim,
+    // mapping the UTIME_OMIT/UTIME_NOW nanosecond sentinels onto the shim's
+    // seconds sentinels (-1 = omit, -2 = now).
+    func encode(_ ts: timespec) -> (sec: Int64, nsec: Int64) {
+        switch CInt(truncatingIfNeeded: ts.tv_nsec) {
+        case UTIME_OMIT: return (-1, 0)
+        case UTIME_NOW: return (-2, 0)
+        default: return (Int64(ts.tv_sec), Int64(ts.tv_nsec))
+        }
+    }
+    let access: (sec: Int64, nsec: Int64)
+    let modification: (sec: Int64, nsec: Int64)
+    if let times = times {
+        access = encode(times[0])
+        modification = encode(times[1])
+    } else {
+        access = (-2, 0)
+        modification = (-2, 0)
+    }
+    return CNIOWindows_futimens(
+        fd,
+        access.sec,
+        access.nsec,
+        modification.sec,
+        modification.nsec
+    )
 }
 
 func remove(_ path: UnsafePointer<CInterop.PlatformChar>) -> CInt {
-    fatalError("remove is unavailable on Windows")
+    CNIOWindows_remove(path)
 }
 
 func getcwd(
     _ buffer: UnsafeMutablePointer<CInterop.PlatformChar>,
     _ size: Int
 ) -> UnsafeMutablePointer<CInterop.PlatformChar>? {
-    fatalError("getcwd is unavailable on Windows")
+    CNIOWindows_getcwd(buffer, CInt(size))
 }
 
 func confstr(
@@ -349,7 +408,10 @@ func confstr(
     _ buffer: UnsafeMutablePointer<CInterop.PlatformChar>,
     _ size: Int
 ) -> Int {
-    fatalError("confstr is unavailable on Windows")
+    // `confstr` is only reached from `homeDirectoryFromPasswd`, which is gated to
+    // non-Windows platforms; this exists solely so the module links. Report the
+    // POSIX "unsupported name" result of 0.
+    0
 }
 
 func fdopendir(_ fd: FileDescriptor.RawValue) -> CInterop.DirPointer? {
@@ -399,15 +461,15 @@ func pthread_key_create(
     _ key: UnsafeMutablePointer<pthread_key_t>,
     _ destructor: (@convention(c) (UnsafeMutableRawPointer?) -> Void)?
 ) -> CInt {
-    fatalError("pthread_key_create is unavailable on Windows")
+    CNIOWindows_fls_key_create(key, destructor)
 }
 
 func pthread_setspecific(_ key: pthread_key_t, _ value: UnsafeRawPointer?) -> CInt {
-    fatalError("pthread_setspecific is unavailable on Windows")
+    CNIOWindows_fls_set(key, value)
 }
 
 func pthread_getspecific(_ key: pthread_key_t) -> UnsafeMutableRawPointer? {
-    fatalError("pthread_getspecific is unavailable on Windows")
+    CNIOWindows_fls_get(key)
 }
 
 #endif  // os(Windows)
