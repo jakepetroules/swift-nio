@@ -210,6 +210,14 @@ var _nio_fs_errno: CInt {
 
 // MARK: - libc string helpers (stubs / trivial)
 
+/// Length in `PlatformChar` units of a NUL-terminated wide string, excluding the
+/// terminator.
+func _nio_fs_wideLength(_ s: UnsafePointer<CInterop.PlatformChar>) -> Int {
+    var length = 0
+    while s[length] != 0 { length += 1 }
+    return length
+}
+
 func strlen(_ s: UnsafePointer<CChar>) -> Int {
     var length = 0
     while s[length] != 0 { length += 1 }
@@ -441,54 +449,76 @@ func confstr(
 private final class WindowsDirectoryStream {
     /// Opaque `CNIOWindows_DirStream *`.
     private let handle: UnsafeMutableRawPointer
-    /// Backing storage for the entry returned by `readdir`; kept alive here and
-    /// handed out as a pointer, valid until the next `readdir`/`closedir`.
-    private var entry = CInterop.DirEnt()
-    /// Wide name buffer referenced by `entry.d_name_wide`.
-    private var wideName: [CInterop.PlatformChar] = []
+    /// Whether the native iterator has already been closed.
+    private var closed = false
+    /// Stable heap storage for the entry returned by `readdir`. Allocating it
+    /// (rather than handing out a pointer to a stored property or Array buffer)
+    /// keeps the address valid after `next()` returns, as POSIX `readdir`
+    /// requires — the returned pointer stays valid until the next
+    /// `readdir`/`closedir`.
+    private let entry: UnsafeMutablePointer<CInterop.DirEnt>
+    /// Heap storage for the wide name referenced by `entry.pointee.d_name_wide`,
+    /// grown on demand and freed with the stream.
+    private var wideName: UnsafeMutablePointer<CInterop.PlatformChar>
+    private var wideNameCapacity: Int
 
     init?(handle: UnsafeMutableRawPointer?) {
         guard let handle = handle else { return nil }
         self.handle = handle
+        self.entry = UnsafeMutablePointer<CInterop.DirEnt>.allocate(capacity: 1)
+        self.entry.initialize(to: CInterop.DirEnt())
+        self.wideNameCapacity = Int(CInterop.maxPathLength) + 1
+        self.wideName = UnsafeMutablePointer<CInterop.PlatformChar>.allocate(
+            capacity: self.wideNameCapacity
+        )
     }
 
     /// Advances to the next entry, returning a pointer to the populated storage,
     /// nil at end-of-directory, or setting `errno` and returning nil on error.
     func next() -> UnsafeMutablePointer<CInterop.DirEnt>? {
-        var nameBuffer = [CInterop.PlatformChar](repeating: 0, count: Int(CInterop.maxPathLength) + 1)
         var type: UInt8 = 0
-        let result = nameBuffer.withUnsafeMutableBufferPointer { buffer in
-            CNIOWindows_dir_next(self.handle, buffer.baseAddress, CInt(buffer.count), &type)
-        }
+        let result = CNIOWindows_dir_next(
+            self.handle,
+            self.wideName,
+            CInt(self.wideNameCapacity),
+            &type
+        )
         guard result == 1 else {
             // 0 (end) and -1 (error, errno set) both surface as nil; the caller
             // distinguishes them via errno through `optionalValueOrErrno`.
             return nil
         }
 
-        self.entry.d_type = type
-        // Keep the wide name alive and point the entry at it.
-        let nameLength = nameBuffer.firstIndex(of: 0).map { $0 + 1 } ?? nameBuffer.count
-        self.wideName = Array(nameBuffer[..<nameLength])
+        self.entry.pointee.d_type = type
+        self.entry.pointee.d_name_wide = self.wideName
         // Fill the narrow d_name tuple far enough for the "." / ".." check; the
         // full name is read via `dirent_dname` from `d_name_wide`.
-        withUnsafeMutableBytes(of: &self.entry.d_name) { raw in
+        let nameLength = _nio_fs_wideLength(self.wideName)
+        withUnsafeMutableBytes(of: &self.entry.pointee.d_name) { raw in
             let bytes = raw.bindMemory(to: CChar.self)
             for i in 0..<bytes.count { bytes[i] = 0 }
             // The wide name's leading units are ASCII for "." / ".." so a direct
             // truncating copy is sufficient for the sentinel comparison.
-            for i in 0..<min(bytes.count - 1, nameLength - 1) {
+            for i in 0..<min(bytes.count - 1, nameLength) {
                 bytes[i] = CChar(truncatingIfNeeded: self.wideName[i])
             }
         }
-        return self.wideName.withUnsafeMutableBufferPointer { wide in
-            self.entry.d_name_wide = wide.baseAddress
-            return withUnsafeMutablePointer(to: &self.entry) { $0 }
-        }
+        return self.entry
     }
 
     func close() {
+        guard !self.closed else { return }
+        self.closed = true
         CNIOWindows_dir_close(self.handle)
+    }
+
+    deinit {
+        // Backstop: close the native iterator if the caller abandoned the stream
+        // without calling closedir, then free the owned storage.
+        self.close()
+        self.entry.deinitialize(count: 1)
+        self.entry.deallocate()
+        self.wideName.deallocate()
     }
 }
 
@@ -536,32 +566,57 @@ private final class WindowsFTS {
     }
 
     private var stack: [Frame] = []
-    /// Directories discovered in the current directory, queued for descent.
-    private var pendingPostOrder: [String] = []
-    private var ent = CInterop.FTSEnt()
-    private var pathStorage: [CInterop.PlatformChar] = []
-    private let followSymlinks: Bool
+    /// Stable heap storage for the entry returned by `fts_read`, valid until the
+    /// next `fts_read`/`fts_close` (matching fts(3)).
+    private let ent: UnsafeMutablePointer<CInterop.FTSEnt>
+    /// Heap storage for the wide path referenced by `ent.pointee.fts_path`, grown
+    /// on demand and freed with the walk.
+    private var pathStorage: UnsafeMutablePointer<CInterop.PlatformChar>
+    private var pathCapacity: Int
+    /// Scratch buffer for reading directory entry names.
+    private let nameBuffer: UnsafeMutablePointer<CInterop.PlatformChar>
+    private let nameCapacity: Int
     private var started = false
     private let rootPath: String
 
     init(rootPath: String, options: CInt) {
         self.rootPath = rootPath
-        self.followSymlinks = (options & FTS_LOGICAL) != 0
+        self.ent = UnsafeMutablePointer<CInterop.FTSEnt>.allocate(capacity: 1)
+        self.ent.initialize(to: CInterop.FTSEnt())
+        self.pathCapacity = Int(CInterop.maxPathLength) + 1
+        self.pathStorage = UnsafeMutablePointer<CInterop.PlatformChar>.allocate(
+            capacity: self.pathCapacity
+        )
+        self.nameCapacity = Int(CInterop.maxPathLength) + 1
+        self.nameBuffer = UnsafeMutablePointer<CInterop.PlatformChar>.allocate(
+            capacity: self.nameCapacity
+        )
     }
 
     private func openDirectory(_ path: String) -> UnsafeMutableRawPointer? {
         path.withPlatformString { CNIOWindows_dir_open_path($0) }
     }
 
-    /// Emits an event by populating `ent`/`pathStorage` and returning a pointer.
+    /// Emits an event by populating the owned `ent`/`pathStorage` and returning a
+    /// stable pointer to it.
     private func emit(info: CInt, errno: CInt, path: String) -> UnsafeMutablePointer<CInterop.FTSEnt> {
-        self.pathStorage = Array(path.utf16.map { CInterop.PlatformChar($0) }) + [0]
-        self.ent.fts_info = UInt16(truncatingIfNeeded: info)
-        self.ent.fts_errno = errno
-        return self.pathStorage.withUnsafeMutableBufferPointer { buffer in
-            self.ent.fts_path = buffer.baseAddress
-            return withUnsafeMutablePointer(to: &self.ent) { $0 }
+        let units = Array(path.utf16)
+        // Grow the owned path buffer if needed (path + NUL).
+        if units.count + 1 > self.pathCapacity {
+            self.pathStorage.deallocate()
+            self.pathCapacity = units.count + 1
+            self.pathStorage = UnsafeMutablePointer<CInterop.PlatformChar>.allocate(
+                capacity: self.pathCapacity
+            )
         }
+        for i in 0..<units.count {
+            self.pathStorage[i] = CInterop.PlatformChar(units[i])
+        }
+        self.pathStorage[units.count] = 0
+        self.ent.pointee.fts_info = UInt16(truncatingIfNeeded: info)
+        self.ent.pointee.fts_errno = errno
+        self.ent.pointee.fts_path = self.pathStorage
+        return self.ent
     }
 
     func next() -> UnsafeMutablePointer<CInterop.FTSEnt>? {
@@ -576,11 +631,13 @@ private final class WindowsFTS {
         }
 
         while let frame = self.stack.last {
-            var nameBuffer = [CInterop.PlatformChar](repeating: 0, count: Int(CInterop.maxPathLength) + 1)
             var type: UInt8 = 0
-            let result = nameBuffer.withUnsafeMutableBufferPointer { buffer in
-                CNIOWindows_dir_next(frame.stream, buffer.baseAddress, CInt(buffer.count), &type)
-            }
+            let result = CNIOWindows_dir_next(
+                frame.stream,
+                self.nameBuffer,
+                CInt(self.nameCapacity),
+                &type
+            )
 
             if result == -1 {
                 let err = _nio_fs_errno
@@ -593,8 +650,12 @@ private final class WindowsFTS {
                 return self.emit(info: FTS_DP, errno: 0, path: frame.path)
             }
 
-            let nameLength = nameBuffer.firstIndex(of: 0) ?? nameBuffer.count
-            let name = String(decoding: nameBuffer[..<nameLength].map { UInt16($0) }, as: UTF16.self)
+            let nameLength = _nio_fs_wideLength(self.nameBuffer)
+            let name = String(
+                decoding: UnsafeBufferPointer(start: self.nameBuffer, count: nameLength)
+                    .map { UInt16($0) },
+                as: UTF16.self
+            )
             if name == "." || name == ".." {
                 continue
             }
@@ -625,6 +686,16 @@ private final class WindowsFTS {
         while let frame = self.stack.popLast() {
             CNIOWindows_dir_close(frame.stream)
         }
+    }
+
+    deinit {
+        // Backstop: close any directories still open if the walk was abandoned,
+        // then free the owned storage.
+        self.close()
+        self.ent.deinitialize(count: 1)
+        self.ent.deallocate()
+        self.pathStorage.deallocate()
+        self.nameBuffer.deallocate()
     }
 }
 

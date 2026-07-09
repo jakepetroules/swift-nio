@@ -397,7 +397,9 @@ int CNIOWindows_openat(int dirfd, const wchar_t *name, int oflag, int windowsFla
   SECURITY_ATTRIBUTES security;
   security.nLength = sizeof(security);
   security.lpSecurityDescriptor = NULL;
-  // closeOnExec maps to a non-inheritable handle.
+  // POSIX descriptors are inheritable by default; O_CLOEXEC opts out. Match that
+  // (and the CRT's own default) by marking the handle inheritable unless
+  // closeOnExec was requested.
   security.bInheritHandle = (windowsFlags & CNIO_O_CLOEXEC) ? FALSE : TRUE;
 
   HANDLE handle = CreateFileW(path, access,
@@ -416,6 +418,10 @@ int CNIOWindows_openat(int dirfd, const wchar_t *name, int oflag, int windowsFla
   }
   if (oflag & _O_APPEND) {
     crtFlags |= _O_APPEND;
+  }
+  // Keep the CRT fd's inheritance flag in step with the handle's.
+  if (windowsFlags & CNIO_O_CLOEXEC) {
+    crtFlags |= _O_NOINHERIT;
   }
   int fd = _open_osfhandle((intptr_t)handle, crtFlags);
   if (fd == -1) {
@@ -487,29 +493,39 @@ intptr_t CNIOWindows_readlink(const wchar_t *path, wchar_t *buffer, intptr_t siz
   }
 
   // Interpret the buffer via the CNIOWindows_REPARSE_DATA_BUFFER declared in the
-  // header. Only symbolic-link reparse points carry a symlink target.
+  // header. Use the SubstituteName (the authoritative target the object manager
+  // resolves) rather than the display-only PrintName, which is frequently empty
+  // for links not created via cmd's `mklink`.
   CNIOWindows_PREPARSE_DATA_BUFFER reparse = (CNIOWindows_PREPARSE_DATA_BUFFER)reparseData;
   const WCHAR *nameBase;
   USHORT nameOffset;
   USHORT nameLength;
   if (reparse->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
     nameBase = reparse->SymbolicLinkReparseBuffer.PathBuffer;
-    nameOffset = reparse->SymbolicLinkReparseBuffer.PrintNameOffset;
-    nameLength = reparse->SymbolicLinkReparseBuffer.PrintNameLength;
+    nameOffset = reparse->SymbolicLinkReparseBuffer.SubstituteNameOffset;
+    nameLength = reparse->SymbolicLinkReparseBuffer.SubstituteNameLength;
   } else if (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
     nameBase = reparse->MountPointReparseBuffer.PathBuffer;
-    nameOffset = reparse->MountPointReparseBuffer.PrintNameOffset;
-    nameLength = reparse->MountPointReparseBuffer.PrintNameLength;
+    nameOffset = reparse->MountPointReparseBuffer.SubstituteNameOffset;
+    nameLength = reparse->MountPointReparseBuffer.SubstituteNameLength;
   } else {
     errno = EINVAL;
     return -1;
   }
 
+  const WCHAR *name = (const WCHAR *)((const BYTE *)nameBase + nameOffset);
   intptr_t wcharCount = nameLength / (intptr_t)sizeof(WCHAR);
+  // Strip the NT-namespace "\??\" prefix that SubstituteName carries, so the
+  // returned target is a usable Win32 path.
+  if (wcharCount >= 4 && name[0] == L'\\' && name[1] == L'?' && name[2] == L'?'
+      && name[3] == L'\\') {
+    name += 4;
+    wcharCount -= 4;
+  }
   if (wcharCount > size) {
     wcharCount = size;  // truncate, matching readlink(2)
   }
-  memcpy(buffer, (const BYTE *)nameBase + nameOffset, (size_t)wcharCount * sizeof(WCHAR));
+  memcpy(buffer, name, (size_t)wcharCount * sizeof(WCHAR));
   return wcharCount;
 }
 
@@ -599,7 +615,12 @@ int CNIOWindows_dir_next(void *dir, wchar_t *nameOut, int nameCap, uint8_t *type
   wcscpy(nameOut, stream->findData.cFileName);
 
   DWORD attributes = stream->findData.dwFileAttributes;
-  if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+  // Only a reparse point tagged IO_REPARSE_TAG_SYMLINK is a symbolic link; other
+  // reparse points (junctions, OneDrive placeholders, dedup stubs, …) should be
+  // reported by their underlying type. For reparse points, dwReserved0 carries
+  // the tag.
+  if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT)
+      && stream->findData.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
     *typeOut = CNIO_DT_LNK;
   } else if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
     *typeOut = CNIO_DT_DIR;
