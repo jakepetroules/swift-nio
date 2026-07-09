@@ -176,6 +176,23 @@ public enum Syscall: Sendable {
     }
     #endif
 
+    #if os(Windows)
+    @_spi(Testing)
+    public static func rename(
+        from old: FilePath,
+        to new: FilePath,
+        replaceExisting: Bool
+    ) -> Result<Void, Errno> {
+        nothingOrErrno(retryOnInterrupt: false) {
+            old.withPlatformString { oldPath in
+                new.withPlatformString { newPath in
+                    CNIOWindows_rename(oldPath, newPath, replaceExisting ? 1 : 0)
+                }
+            }
+        }
+    }
+    #endif
+
     #if canImport(Glibc) || canImport(Musl) || canImport(Bionic)
     @_spi(Testing)
     public struct LinkAtFlags: OptionSet {

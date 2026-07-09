@@ -138,4 +138,22 @@ int CNIOWindows_copysymlink(const wchar_t *source, const wchar_t *destination, i
   return CNIOWindows_copyfileImpl(source, destination, flags);
 }
 
+int CNIOWindows_rename(const wchar_t *source, const wchar_t *destination, int replaceExisting) {
+  // MOVEFILE_COPY_ALLOWED lets the move fall back to copy+delete across volumes,
+  // matching rename(2)'s behaviour for the common same-volume case while not
+  // failing outright on cross-volume moves. When `replaceExisting` is set the
+  // move atomically replaces any existing destination (like a plain rename);
+  // otherwise an existing destination causes ERROR_ALREADY_EXISTS -> EEXIST,
+  // mirroring renameat2 with RENAME_NOREPLACE.
+  DWORD flags = MOVEFILE_COPY_ALLOWED;
+  if (replaceExisting) {
+    flags |= MOVEFILE_REPLACE_EXISTING;
+  }
+  if (MoveFileExW(source, destination, flags)) {
+    return 0;
+  }
+  errno = CNIOWindows_win32ErrorToErrno(GetLastError());
+  return -1;
+}
+
 #endif

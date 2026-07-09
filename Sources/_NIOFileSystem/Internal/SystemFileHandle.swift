@@ -849,7 +849,15 @@ extension SystemFileHandle.SendableView {
                     )
                 }
                 #elseif os(Windows)
-                fatalError("file materialization via rename is unavailable on Windows")
+                // Windows has no atomic exclusive rename primitive; map exclusive
+                // creation to a non-replacing move (an existing destination fails
+                // with EEXIST, handled below) and non-exclusive to a replacing move.
+                renameFunction = "MoveFileExW"
+                renameResult = Syscall.rename(
+                    from: createdPath,
+                    to: desiredPath,
+                    replaceExisting: !materialization.exclusive
+                )
                 #endif
 
                 if materialization.exclusive {

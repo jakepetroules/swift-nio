@@ -140,6 +140,13 @@ int NIO(copyfile)(const wchar_t *source, const wchar_t *destination, int failIfE
 // to `EACCES`.
 int NIO(copysymlink)(const wchar_t *source, const wchar_t *destination, int failIfExists);
 
+// Renames (moves) `source` to `destination` using `MoveFileExW`. If
+// `replaceExisting` is non-zero any existing destination is atomically
+// replaced; otherwise an existing destination fails with `errno` set to
+// `EEXIST`. `MOVEFILE_COPY_ALLOWED` permits a copy+delete fallback across
+// volumes. Returns 0 on success, or -1 with `errno` set.
+int NIO(rename)(const wchar_t *source, const wchar_t *destination, int replaceExisting);
+
 #undef NIO
 
 #endif
