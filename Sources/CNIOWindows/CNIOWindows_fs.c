@@ -26,6 +26,7 @@
 #include <windows.h>
 #include <direct.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <io.h>
 #include <stdlib.h>
 #include <string.h>
@@ -299,6 +300,217 @@ int CNIOWindows_futimens(int fd, int64_t atimeSec, int64_t atimeNsec,
     return -1;
   }
   return 0;
+}
+
+// MARK: - openat / *at family
+
+// Recover the full path behind a directory descriptor. Writes up to `capacity`
+// wchars (including the NUL) into `out`; returns the length (excluding NUL) or
+// -1 with errno set.
+static int CNIOWindows_pathForFd(int dirfd, wchar_t *out, DWORD capacity) {
+  HANDLE handle = (HANDLE)_get_osfhandle(dirfd);
+  if (handle == INVALID_HANDLE_VALUE) {
+    errno = EBADF;
+    return -1;
+  }
+  // FILE_NAME_NORMALIZED returns a "\\?\"-prefixed path, which is fine to feed
+  // straight back into the wide Win32 file APIs.
+  DWORD length = GetFinalPathNameByHandleW(handle, out, capacity, FILE_NAME_NORMALIZED);
+  if (length == 0) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+  if (length >= capacity) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  return (int)length;
+}
+
+// Join `dirfd`'s path with the relative child `name` into `out`. Returns 0 or
+// -1 with errno set.
+static int CNIOWindows_joinAt(int dirfd, const wchar_t *name, wchar_t *out, size_t capacity) {
+  int baseLength = CNIOWindows_pathForFd(dirfd, out, (DWORD)capacity);
+  if (baseLength < 0) {
+    return -1;
+  }
+  size_t nameLength = wcslen(name);
+  // base + '\\' + name + NUL
+  if ((size_t)baseLength + 1 + nameLength + 1 > capacity) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  out[baseLength] = L'\\';
+  memcpy(out + baseLength + 1, name, (nameLength + 1) * sizeof(wchar_t));
+  return 0;
+}
+
+int CNIOWindows_openat(int dirfd, const wchar_t *name, int oflag, int windowsFlags, uint32_t mode) {
+  wchar_t path[32768];  // max long-path length
+  if (CNIOWindows_joinAt(dirfd, name, path, sizeof(path) / sizeof(wchar_t)) != 0) {
+    return -1;
+  }
+
+  // Access mode from the low CRT bits.
+  DWORD access = 0;
+  switch (oflag & (_O_RDONLY | _O_WRONLY | _O_RDWR)) {
+  case _O_WRONLY: access = GENERIC_WRITE; break;
+  case _O_RDWR:   access = GENERIC_READ | GENERIC_WRITE; break;
+  default:        access = GENERIC_READ; break;
+  }
+  if (oflag & _O_APPEND) {
+    access |= FILE_APPEND_DATA;
+  }
+
+  // Creation disposition from the CRT create/excl/trunc bits.
+  DWORD disposition;
+  BOOL create = (oflag & _O_CREAT) != 0;
+  BOOL excl = (oflag & _O_EXCL) != 0;
+  BOOL trunc = (oflag & _O_TRUNC) != 0;
+  if (create && excl) {
+    disposition = CREATE_NEW;
+  } else if (create && trunc) {
+    disposition = CREATE_ALWAYS;
+  } else if (create) {
+    disposition = OPEN_ALWAYS;
+  } else if (trunc) {
+    disposition = TRUNCATE_EXISTING;
+  } else {
+    disposition = OPEN_EXISTING;
+  }
+
+  DWORD attributes = FILE_ATTRIBUTE_NORMAL;
+  // FILE_FLAG_BACKUP_SEMANTICS is required to obtain a handle to a directory.
+  if (windowsFlags & CNIO_O_DIRECTORY) {
+    attributes |= FILE_FLAG_BACKUP_SEMANTICS;
+  }
+  // noFollow: open the reparse point itself rather than its target.
+  if (windowsFlags & CNIO_O_NOFOLLOW) {
+    attributes |= FILE_FLAG_OPEN_REPARSE_POINT;
+  }
+  // A read-only created file gets the read-only attribute when mode lacks write.
+  if ((disposition == CREATE_NEW || disposition == CREATE_ALWAYS || disposition == OPEN_ALWAYS)
+      && (mode & 0200) == 0) {
+    attributes = (attributes & ~(DWORD)FILE_ATTRIBUTE_NORMAL) | FILE_ATTRIBUTE_READONLY;
+  }
+
+  SECURITY_ATTRIBUTES security;
+  security.nLength = sizeof(security);
+  security.lpSecurityDescriptor = NULL;
+  // closeOnExec maps to a non-inheritable handle.
+  security.bInheritHandle = (windowsFlags & CNIO_O_CLOEXEC) ? FALSE : TRUE;
+
+  HANDLE handle = CreateFileW(path, access,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              &security, disposition, attributes, NULL);
+  if (handle == INVALID_HANDLE_VALUE) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+
+  // Wrap the Win32 HANDLE in a CRT file descriptor so the rest of NIOFS (which
+  // works in terms of fds) can use it.
+  int crtFlags = _O_BINARY;
+  if ((oflag & (_O_RDONLY | _O_WRONLY | _O_RDWR)) == _O_RDONLY) {
+    crtFlags |= _O_RDONLY;
+  }
+  if (oflag & _O_APPEND) {
+    crtFlags |= _O_APPEND;
+  }
+  int fd = _open_osfhandle((intptr_t)handle, crtFlags);
+  if (fd == -1) {
+    CloseHandle(handle);
+    errno = EMFILE;
+    return -1;
+  }
+  return fd;
+}
+
+int CNIOWindows_unlinkat(int dirfd, const wchar_t *name, int removeDir) {
+  wchar_t path[32768];
+  if (CNIOWindows_joinAt(dirfd, name, path, sizeof(path) / sizeof(wchar_t)) != 0) {
+    return -1;
+  }
+  BOOL ok = removeDir ? RemoveDirectoryW(path) : DeleteFileW(path);
+  if (!ok) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+  return 0;
+}
+
+int CNIOWindows_symlink(const wchar_t *target, const wchar_t *linkPath) {
+  // Choose the link type from the target: if it resolves to an existing
+  // directory, create a directory symlink. SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+  // lets this succeed under Developer Mode without elevation.
+  DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+  DWORD targetAttrs = GetFileAttributesW(target);
+  if (targetAttrs != INVALID_FILE_ATTRIBUTES && (targetAttrs & FILE_ATTRIBUTE_DIRECTORY)) {
+    flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+  }
+  if (!CreateSymbolicLinkW(linkPath, target, flags)) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+  return 0;
+}
+
+int CNIOWindows_symlinkat(const wchar_t *target, int dirfd, const wchar_t *linkPath) {
+  wchar_t joined[32768];
+  if (CNIOWindows_joinAt(dirfd, linkPath, joined, sizeof(joined) / sizeof(wchar_t)) != 0) {
+    return -1;
+  }
+  return CNIOWindows_symlink(target, joined);
+}
+
+intptr_t CNIOWindows_readlink(const wchar_t *path, wchar_t *buffer, intptr_t size) {
+  // Open the reparse point itself and let GetFinalPathNameByHandleW would follow
+  // it, so instead read the raw reparse data and extract the print name.
+  HANDLE handle = CreateFileW(path, FILE_READ_ATTRIBUTES,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              NULL, OPEN_EXISTING,
+                              FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (handle == INVALID_HANDLE_VALUE) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+
+  // REPARSE_DATA_BUFFER can be up to MAXIMUM_REPARSE_DATA_BUFFER_SIZE bytes.
+  BYTE reparseData[MAXIMUM_REPARSE_DATA_BUFFER_SIZE];
+  DWORD returned = 0;
+  BOOL ok = DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, NULL, 0,
+                            reparseData, sizeof(reparseData), &returned, NULL);
+  CloseHandle(handle);
+  if (!ok) {
+    errno = CNIOWindows_fsErrno(GetLastError());
+    return -1;
+  }
+
+  // Interpret the buffer via the CNIOWindows_REPARSE_DATA_BUFFER declared in the
+  // header. Only symbolic-link reparse points carry a symlink target.
+  CNIOWindows_PREPARSE_DATA_BUFFER reparse = (CNIOWindows_PREPARSE_DATA_BUFFER)reparseData;
+  const WCHAR *nameBase;
+  USHORT nameOffset;
+  USHORT nameLength;
+  if (reparse->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
+    nameBase = reparse->SymbolicLinkReparseBuffer.PathBuffer;
+    nameOffset = reparse->SymbolicLinkReparseBuffer.PrintNameOffset;
+    nameLength = reparse->SymbolicLinkReparseBuffer.PrintNameLength;
+  } else if (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
+    nameBase = reparse->MountPointReparseBuffer.PathBuffer;
+    nameOffset = reparse->MountPointReparseBuffer.PrintNameOffset;
+    nameLength = reparse->MountPointReparseBuffer.PrintNameLength;
+  } else {
+    errno = EINVAL;
+    return -1;
+  }
+
+  intptr_t wcharCount = nameLength / (intptr_t)sizeof(WCHAR);
+  if (wcharCount > size) {
+    wcharCount = size;  // truncate, matching readlink(2)
+  }
+  memcpy(buffer, (const BYTE *)nameBase + nameOffset, (size_t)wcharCount * sizeof(WCHAR));
+  return wcharCount;
 }
 
 #endif  // defined(_WIN32)

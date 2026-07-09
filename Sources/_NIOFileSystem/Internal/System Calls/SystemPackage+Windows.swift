@@ -240,12 +240,23 @@ func getenv(_ name: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>? {
 // These match the bare-libc call signatures used by the `system_*` / `libc_*`
 // wrappers, so those wrappers need no edits. All are stubs.
 
+// Decodes the swift-system-gap OpenOptions bits we own out of `oflag` into the
+// `windowsFlags` the C `openat` shim expects, so the C side needn't know their
+// numeric values.
+private func _nio_fs_windowsOpenFlags(_ oflag: CInt) -> CInt {
+    var flags: CInt = 0
+    if (oflag & FileDescriptor.OpenOptions.noFollow.rawValue) != 0 { flags |= CNIO_O_NOFOLLOW }
+    if (oflag & FileDescriptor.OpenOptions.directory.rawValue) != 0 { flags |= CNIO_O_DIRECTORY }
+    if (oflag & FileDescriptor.OpenOptions.closeOnExec.rawValue) != 0 { flags |= CNIO_O_CLOEXEC }
+    return flags
+}
+
 func openat(
     _ fd: FileDescriptor.RawValue,
     _ path: UnsafePointer<CInterop.PlatformChar>,
     _ oflag: CInt
 ) -> CInt {
-    fatalError("openat is unavailable on Windows")
+    CNIOWindows_openat(fd, path, oflag, _nio_fs_windowsOpenFlags(oflag), 0)
 }
 
 func openat(
@@ -254,7 +265,7 @@ func openat(
     _ oflag: CInt,
     _ mode: CInterop.Mode
 ) -> CInt {
-    fatalError("openat is unavailable on Windows")
+    CNIOWindows_openat(fd, path, oflag, _nio_fs_windowsOpenFlags(oflag), UInt32(mode))
 }
 
 func stat(
@@ -313,7 +324,9 @@ func symlink(
     _ destination: UnsafePointer<CInterop.PlatformChar>,
     _ source: UnsafePointer<CInterop.PlatformChar>
 ) -> CInt {
-    fatalError("symlink is unavailable on Windows")
+    // POSIX `symlink(target, linkpath)`; NIOFS passes (destination=target,
+    // source=linkpath) matching that order.
+    CNIOWindows_symlink(destination, source)
 }
 
 func symlinkat(
@@ -321,7 +334,7 @@ func symlinkat(
     _ dirfd: FileDescriptor.RawValue,
     _ source: UnsafePointer<CInterop.PlatformChar>
 ) -> CInt {
-    fatalError("symlinkat is unavailable on Windows")
+    CNIOWindows_symlinkat(destination, dirfd, source)
 }
 
 func readlink(
@@ -329,7 +342,7 @@ func readlink(
     _ buffer: UnsafeMutablePointer<CInterop.PlatformChar>,
     _ size: Int
 ) -> Int {
-    fatalError("readlink is unavailable on Windows")
+    Int(CNIOWindows_readlink(path, buffer, size))
 }
 
 func rename(
@@ -356,7 +369,8 @@ func unlinkat(
     _ path: UnsafePointer<CInterop.PlatformChar>,
     _ flags: CInt
 ) -> CInt {
-    fatalError("unlinkat is unavailable on Windows")
+    // A non-zero `flags` carries AT_REMOVEDIR (the only flag NIOFS would pass).
+    CNIOWindows_unlinkat(fd, path, flags != 0 ? 1 : 0)
 }
 
 func futimens(

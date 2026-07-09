@@ -234,6 +234,43 @@ int NIO(fchmod)(int fd, uint32_t mode);
 // sentinels onto this convention.
 int NIO(futimens)(int fd, int64_t atimeSec, int64_t atimeNsec, int64_t mtimeSec, int64_t mtimeNsec);
 
+// MARK: - openat / *at family
+//
+// NIOFS always passes a real, open directory descriptor to these calls on
+// Windows (AT_FDCWD is not exposed there), and file-system paths are made
+// absolute before use. Each shim recovers the directory's path from `dirfd`
+// via GetFinalPathNameByHandleW and joins the relative child name onto it.
+//
+// Behaviour gap: resolving `dirfd` to a path and then operating on that path is
+// not atomic with respect to the directory being renamed concurrently (unlike
+// POSIX *at calls, which pin the directory). Callers needing atomicity must
+// serialise externally.
+
+// `openat(2)`. `oflag` carries the CRT `_O_*` access/creation bits OR'd with the
+// swift-system-gap OpenOptions bits the Swift layer owns; `windowsFlags`
+// separately carries those gap bits (noFollow / directory / closeOnExec) already
+// decoded so the C side need not know their numeric values. On success returns a
+// CRT file descriptor; on failure returns -1 with `errno` set.
+int NIO(openat)(int dirfd, const wchar_t *name, int oflag, int windowsFlags, uint32_t mode);
+
+// Decoded `windowsFlags` bits for `openat`, set by the Swift layer.
+#define CNIO_O_NOFOLLOW   0x1
+#define CNIO_O_DIRECTORY  0x2
+#define CNIO_O_CLOEXEC    0x4
+
+// `unlinkat(2)`: removes a directory when `removeDir` is non-zero (AT_REMOVEDIR),
+// otherwise a file.
+int NIO(unlinkat)(int dirfd, const wchar_t *name, int removeDir);
+
+// `symlink(2)` / `symlinkat(2)`: create a symbolic link at `linkPath` pointing at
+// `target`. Requires SeCreateSymbolicLinkPrivilege; without it fails with EACCES.
+int NIO(symlink)(const wchar_t *target, const wchar_t *linkPath);
+int NIO(symlinkat)(const wchar_t *target, int dirfd, const wchar_t *linkPath);
+
+// `readlink(2)`: reads a reparse point's target into `buffer` (wide chars, not
+// NUL-terminated), returning the number of wchars written, or -1 with `errno`.
+intptr_t NIO(readlink)(const wchar_t *path, wchar_t *buffer, intptr_t size);
+
 #undef NIO
 
 #endif
