@@ -18,6 +18,12 @@ import CNIOLinux
 import NIOEmbedded
 import XCTest
 
+#if os(Windows)
+import CNIOWindows
+import WinSDK
+private typealias socklen_t = WinSDK.socklen_t
+#endif
+
 @testable import NIOPosix
 
 extension SocketAddress {
@@ -178,8 +184,8 @@ class PendingDatagramWritesManagerTests: XCTestCase {
                             )
                             XCTAssertEqual(
                                 expected[multiState].map { $0.1 },
-                                ptrs.map { SocketAddress($0.msg_hdr.msg_name.assumingMemoryBound(to: sockaddr.self)) },
-                                "in vector write \(multiState) (overall \(everythingState)), \(expected[multiState].map { $0.1 }) addresses expected but \(ptrs.map { SocketAddress($0.msg_hdr.msg_name.assumingMemoryBound(to: sockaddr.self)) }) actual",
+                                ptrs.map { SocketAddress($0.msg_hdr.msg_name!.assumingMemoryBound(to: sockaddr.self)) },
+                                "in vector write \(multiState) (overall \(everythingState)), \(expected[multiState].map { $0.1 }) addresses expected but \(ptrs.map { SocketAddress($0.msg_hdr.msg_name!.assumingMemoryBound(to: sockaddr.self)) }) actual",
                                 file: (file),
                                 line: line
                             )

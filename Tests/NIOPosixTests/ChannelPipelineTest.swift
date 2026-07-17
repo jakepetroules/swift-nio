@@ -20,6 +20,11 @@ import NIOPosix
 import NIOTestUtils
 import XCTest
 
+#if os(Windows)
+import WinSDK
+private typealias in_port_t = UInt16
+#endif
+
 @testable import NIOCore
 
 private final class IndexWritingHandler: ChannelDuplexHandler {
